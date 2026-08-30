@@ -1,0 +1,18 @@
+workflow:
+  requests:
+    - id: issue_code
+      method: POST
+      url: /issue-code
+    - id: redeem
+      method: POST
+      url: /redeem
+      headers: {content-type: application/json}
+      body: '{"code":"${CODE}"}'
+      bindings: [{name: CODE, in: body, from: issue_code.$.code}]
+  act_request: redeem
+setup_requests: [issue_code]
+session_ref: session.json
+invariant: {type: max_successes, value: 1}
+success_when: {status: 200}
+reject_when: {status: 409}
+reset_recipe: {kind: fresh_code, setup_ref: issue_code, how: "re-run issue_code before each trial"}
