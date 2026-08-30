@@ -11,6 +11,7 @@ package sync
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 )
@@ -53,6 +54,22 @@ type Response struct {
 type SyncStrategy interface {
 	Burst(ctx context.Context, reqs []PreparedRequest) ([]Response, error)
 	Name() string
+}
+
+// SendOne sends a single request with nothing to synchronize against — used
+// for the Setup phase, sequential Baseline runs, and post-state probes,
+// none of which are part of a concurrent burst. It reuses H1LastByte with a
+// single instance rather than duplicating request-building/response-reading
+// logic.
+func SendOne(ctx context.Context, d Dialer, req PreparedRequest) (Response, error) {
+	responses, err := (&H1LastByte{Dialer: d}).Burst(ctx, []PreparedRequest{req})
+	if err != nil {
+		return Response{}, err
+	}
+	if len(responses) == 0 {
+		return Response{}, fmt.Errorf("sync: SendOne got no response")
+	}
+	return responses[0], nil
 }
 
 // Dispersion returns the spread (max-min) of ArrivedAt across responses that
