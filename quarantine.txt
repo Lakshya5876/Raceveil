@@ -1,0 +1,11 @@
+# quarantine.txt — RaceVeil flaky-test quarantine (committed, team-wide)
+#
+# Guide §6.2 T2 (v1_claude_code_development_guide_new.md): flaky tests are
+# quarantined here with a linked issue — never deleted, never
+# retried-until-green. /review prints the quarantine count and covered
+# modules on every run. A quarantined test covering a CORE_FILES module
+# (CLAUDE.md §4) is a HARD STOP.
+#
+# Format (one per line): <package/path>::<TestName>  # issue: <link>  date: <YYYY-MM-DD>
+#
+# Currently empty — nothing quarantined.

@@ -1,0 +1,11 @@
+# Governance trust-root — requires Code Owner review before merge.
+# Scaffolded by CovenantWin's install.ps1; replace @your-org/platform-team with a real
+# team/user, then enable "Require review from Code Owners" on this repo's
+# default-branch protection rule (Settings -> Branches). CODEOWNERS alone is
+# advisory — GitHub does not enforce it without that branch protection rule.
+/.githooks/                         @your-org/platform-team
+/.claude/covenant_integrity.sha256      @your-org/platform-team
+/.claude/hooks/                     @your-org/platform-team
+/.claude/settings.json              @your-org/platform-team
+/.github/workflows/covenant.yml         @your-org/platform-team
+/CLAUDE.md                          @your-org/platform-team
