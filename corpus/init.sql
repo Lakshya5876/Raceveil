@@ -31,3 +31,14 @@ CREATE TABLE login_safe (username TEXT PRIMARY KEY, attempts INT NOT NULL DEFAUL
 -- Archetype 6 (single_transition): duplicate "confirm" state transition.
 CREATE TABLE orders_vuln (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending');
 CREATE TABLE orders_safe (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending');
+
+-- Spring Boot corpus subset (Design/TEST_PLAN.md Layer 5: at minimum two
+-- stacks). "_spring" tables are the same three archetypes reimplemented in
+-- Spring Boot, kept separate from the Node app's tables so the two corpus
+-- apps never share mutable state.
+CREATE TABLE coupons_vuln_spring (code TEXT PRIMARY KEY, used BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE TABLE coupons_safe_spring (code TEXT PRIMARY KEY, used BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE TABLE inventory_vuln_spring (sku TEXT PRIMARY KEY, stock INT NOT NULL);
+CREATE TABLE inventory_safe_spring (sku TEXT PRIMARY KEY, stock INT NOT NULL);
+CREATE TABLE orders_vuln_spring (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending');
+CREATE TABLE orders_safe_spring (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending');

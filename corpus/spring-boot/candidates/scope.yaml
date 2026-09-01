@@ -1,0 +1,18 @@
+target: http://127.0.0.1:4100
+authorized_by: "RaceVeil Phase 2 corpus — local self-authorized test fixture"
+hosts:
+  - host: 127.0.0.1
+    ports: [4100]
+    pin_ip: 127.0.0.1
+    path_prefixes: ["/"]
+allow_private_target: true
+caps:
+  max_concurrency: 20
+  max_requests_total: 5000
+  max_rate_per_sec: 200
+  max_wallclock_sec: 180
+destructive:
+  allow_verbs: []
+  deny_paths: []
+proof:
+  max_successful_effects: 5
