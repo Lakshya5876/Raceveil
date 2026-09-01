@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lakshya5876/Raceveil/internal/application/minimize"
 	"github.com/Lakshya5876/Raceveil/internal/application/oracle"
 	"github.com/Lakshya5876/Raceveil/internal/domain"
 	"github.com/Lakshya5876/Raceveil/internal/infrastructure/sync"
@@ -24,6 +25,10 @@ const (
 	baselineRuns  = 2
 	maxTrials     = 6
 	escalateAfter = 3
+
+	// minimizeTrialsPerStep is K_min: fresh trials run at each concurrency
+	// step during minimization (Design/ARCHITECTURE.md §6 ADR-014).
+	minimizeTrialsPerStep = 3
 )
 
 var concurrencyLadder = []int{2, 5}
@@ -88,27 +93,111 @@ func Run(ctx context.Context, cfg RunConfig) (Outcome, error) {
 		return Outcome{}, err
 	}
 
-	result, found := oracle.Evaluate(oracle.EvaluateInput{
-		CandidateID:          cfg.Candidate.ID,
-		Invariant:            cfg.Candidate.Invariant,
-		RequiredProofEffects: required,
-		ClassifierSeparation: baseline.ClassifierSeparation,
-		Trials:               trials,
-	})
+	result, found := evaluateExperiment(cfg, required, baseline, trials)
 	if err := cfg.Store.PersistOracle(cfg.Candidate.ID, result); err != nil {
 		return Outcome{}, fmt.Errorf("persist oracle result: %w", err)
 	}
-
 	outcome := Outcome{Oracle: result, Found: found}
 	if !found {
 		return outcome, nil
 	}
-	finding := buildFinding(cfg, result, trials)
-	if err := cfg.Store.PersistFinding(finding); err != nil {
-		return Outcome{}, fmt.Errorf("persist finding: %w", err)
+
+	finding, err := finalizeFinding(ctx, cfg, baseURL, result, trials)
+	if err != nil {
+		return Outcome{}, err
 	}
 	outcome.Finding = &finding
 	return outcome, nil
+}
+
+func evaluateExperiment(cfg RunConfig, required int, baseline domain.Baseline, trials []domain.ConcurrentTrial) (domain.OracleResult, bool) {
+	corroboration := corroborationFromTrials(trials, cfg.Candidate.Invariant.Value)
+	return oracle.Evaluate(oracle.EvaluateInput{
+		CandidateID:              cfg.Candidate.ID,
+		Invariant:                cfg.Candidate.Invariant,
+		RequiredProofEffects:     required,
+		ClassifierSeparation:     baseline.ClassifierSeparation,
+		Trials:                   trials,
+		CorroboratingObservables: corroboration,
+	})
+}
+
+// finalizeFinding runs minimization and packages the Finding — split out of
+// Run so the top-level pipeline stays a flat, readable sequence.
+func finalizeFinding(ctx context.Context, cfg RunConfig, baseURL string, result domain.OracleResult, trials []domain.ConcurrentTrial) (domain.Finding, error) {
+	minimization, err := minimizeExperiment(ctx, cfg, baseURL, trials)
+	if err != nil {
+		return domain.Finding{}, fmt.Errorf("minimize: %w", err)
+	}
+	if err := cfg.Store.PersistMinimization(cfg.Candidate.ID, minimization); err != nil {
+		return domain.Finding{}, fmt.Errorf("persist minimization: %w", err)
+	}
+	finding := buildFinding(cfg, result, trials, minimization)
+	if err := cfg.Store.PersistFinding(finding); err != nil {
+		return domain.Finding{}, fmt.Errorf("persist finding: %w", err)
+	}
+	return finding, nil
+}
+
+// minimizeExperiment reduces a Finding's trigger to its smallest
+// reproducible form: the decreasing concurrency sweep, then greedy Setup-
+// request dropping (Design/ARCHITECTURE.md §6). Only runs once a violation
+// is already established (Run calls it after Evaluate returns found=true).
+func minimizeExperiment(ctx context.Context, cfg RunConfig, baseURL string, trials []domain.ConcurrentTrial) (domain.Minimization, error) {
+	startN := 0
+	for _, t := range trials {
+		if t.N > startN {
+			startN = t.N
+		}
+	}
+	actSpec, ok := cfg.Candidate.Workflow.RequestByID(cfg.Candidate.Workflow.ActRequest)
+	if !ok {
+		return domain.Minimization{}, fmt.Errorf("act_request %q not found in workflow.requests", cfg.Candidate.Workflow.ActRequest)
+	}
+	tc := trialContext{
+		cfg: cfg, baseURL: baseURL, actSpec: actSpec,
+		strategy:   sync.NewH1LastByte(cfg.Guard),
+		success:    ruleFromMatcher(cfg.Candidate.SuccessWhen),
+		reject:     ruleFromMatcher(cfg.Candidate.RejectWhen),
+		stateIndep: stateIndependenceFor(cfg.Candidate),
+	}
+
+	concurrency, err := minimize.SweepConcurrency(ctx, func(ctx context.Context, n int) (bool, error) {
+		trial, err := tc.runOne(ctx, 0, n)
+		return trial.Violation, err
+	}, startN, minimizeTrialsPerStep)
+	if err != nil {
+		return domain.Minimization{}, err
+	}
+
+	workflow, err := minimize.MinimizeWorkflow(ctx, func(ctx context.Context, setupRequests []string) (bool, error) {
+		reduced := cfg
+		reduced.Candidate.Workflow.SetupRequests = setupRequests
+		rc := trialContext{
+			cfg: reduced, baseURL: baseURL, actSpec: actSpec,
+			strategy:   sync.NewH1LastByte(reduced.Guard),
+			success:    ruleFromMatcher(reduced.Candidate.SuccessWhen),
+			reject:     ruleFromMatcher(reduced.Candidate.RejectWhen),
+			stateIndep: stateIndependenceFor(reduced.Candidate),
+		}
+		trial, err := rc.runOne(ctx, 0, concurrency.MinimalN)
+		if err != nil {
+			// A dropped Setup request can break a binding the Act request
+			// still needs (e.g. no fresh code to redeem) — that failure
+			// itself proves the request is required, not a fatal error.
+			return false, nil
+		}
+		return trial.Violation, nil
+	}, cfg.Candidate.Workflow.SetupRequests)
+	if err != nil {
+		return domain.Minimization{}, err
+	}
+
+	return domain.Minimization{
+		Concurrency: concurrency,
+		Workflow:    workflow,
+		Method:      "decreasing-sweep + delta-debugging with re-verification",
+	}, nil
 }
 
 func persistCandidateInputs(cfg RunConfig) error {

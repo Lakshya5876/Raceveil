@@ -27,6 +27,7 @@ type RunStore interface {
 	PersistBaseline(candidateID string, baseline Baseline) error
 	PersistTrial(candidateID string, trial ConcurrentTrial) error
 	PersistOracle(candidateID string, result OracleResult) error
+	PersistMinimization(candidateID string, m Minimization) error
 	PersistFinding(finding Finding) error
 	PersistAudit(entry AuditEntry) error
 }

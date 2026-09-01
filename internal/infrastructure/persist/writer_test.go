@@ -115,8 +115,12 @@ func TestPersistBaselineAndOracle_WriteExperimentJSON(t *testing.T) {
 	if err := w.PersistOracle("cand_redeem", oracle); err != nil {
 		t.Fatalf("PersistOracle: %v", err)
 	}
+	minimization := domain.Minimization{Method: "decreasing-sweep + delta-debugging with re-verification"}
+	if err := w.PersistMinimization("cand_redeem", minimization); err != nil {
+		t.Fatalf("PersistMinimization: %v", err)
+	}
 	dir := filepath.Join(w.RunDir(), "experiments", "cand_redeem")
-	for _, f := range []string{"baseline.json", "oracle.json"} {
+	for _, f := range []string{"baseline.json", "oracle.json", "minimization.json"} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("expected %s to exist: %v", f, err)
 		}

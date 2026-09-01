@@ -117,8 +117,12 @@ func validateInvariant(inv domain.Invariant) error {
 	if inv.Type == "" {
 		return fmt.Errorf("invariant.type is required")
 	}
-	if inv.Type != domain.InvariantMaxSuccesses {
-		return fmt.Errorf("invariant.type %q is not supported in Phase 1 (only max_successes is implemented)", inv.Type)
+	switch inv.Type {
+	case domain.InvariantMaxSuccesses, domain.InvariantUniqueness,
+		domain.InvariantMonotonicLimit, domain.InvariantSingleTransition:
+		// the four canonical types (Design/DOMAIN.md §Invariant)
+	default:
+		return fmt.Errorf("invariant.type %q is not one of the canonical types (max_successes, uniqueness, monotonic_limit, single_transition)", inv.Type)
 	}
 	if inv.Value < 0 {
 		return fmt.Errorf("invariant.value must be >= 0, got %d", inv.Value)

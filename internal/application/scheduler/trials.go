@@ -84,6 +84,9 @@ func (tc trialContext) runOne(ctx context.Context, trialNum, n int) (domain.Conc
 		auditSend(tc.cfg, tc.actSpec.Method, tc.baseURL+tc.actSpec.URL, status)
 	}
 
+	observables := map[string]any{"success": summary.Success, "reject": summary.Reject, "error": summary.Error}
+	tc.collectCorroboration(ctx, responses, observables)
+
 	return domain.ConcurrentTrial{
 		Trial:                    trialNum,
 		N:                        n,
@@ -93,10 +96,77 @@ func (tc trialContext) runOne(ctx context.Context, trialNum, n int) (domain.Conc
 		ResponsesSummary:         summary,
 		SuccessCountS:            s,
 		Violation:                s > tc.cfg.Candidate.Invariant.Value,
-		Observables: map[string]any{
-			"success": summary.Success, "reject": summary.Reject, "error": summary.Error,
-		},
+		Observables:              observables,
 	}, nil
+}
+
+// collectCorroboration extracts Level 2 (body-differential) and Level 4
+// (post-state probe) raw observations into observables, when the Candidate
+// declares them (Design/ARCHITECTURE.md §4). Best-effort: an extraction or
+// probe failure just leaves that observable absent for this trial rather
+// than aborting the run — Level 3 evidence stands on its own.
+func (tc trialContext) collectCorroboration(ctx context.Context, responses []sync.Response, observables map[string]any) {
+	if bd := tc.cfg.Candidate.BodyDifferential; bd != nil {
+		var values []string
+		for _, r := range responses {
+			if r.Err != nil || oracle.Classify(oracle.ObservedResponse{StatusCode: r.StatusCode, Body: string(r.Body)}, tc.success, tc.reject) != oracle.Success {
+				continue
+			}
+			if v, err := extractJSONPathValue(r.Body, bd.Extract); err == nil {
+				values = append(values, v)
+			}
+		}
+		observables["body_diff_distinct_effects"] = oracle.DistinctEffects(values)
+	}
+	if probe := tc.cfg.Candidate.PostStateProbe; probe != nil {
+		if count, err := probePostState(ctx, tc.cfg, probe, tc.baseURL); err == nil {
+			observables["post_state_count"] = count
+		}
+	}
+}
+
+// probePostState issues the Level 4 read-only post-state probe after a
+// burst and extracts the persisted count. It does not consume the proof-cap
+// budget — a read-only observation is not a caused effect
+// (Design/SECURITY.md §6).
+func probePostState(ctx context.Context, cfg RunConfig, probe *domain.PostStateProbe, baseURL string) (int, error) {
+	spec := domain.RequestSpec{ID: "post_state_probe", Method: probe.Method, URL: probe.Path}
+	resp, err := sendSpec(ctx, cfg, spec, baseURL, priorResponses{})
+	if err != nil {
+		return 0, fmt.Errorf("post_state_probe: %w", err)
+	}
+	return extractJSONPathInt(resp.Body, probe.Extract)
+}
+
+// corroborationFromTrials decides, across every trial in the Experiment,
+// which corroborating observables (Design/ARCHITECTURE.md §4: Level 2
+// body-differential, Level 4 post-state) actually exceeded the Invariant's
+// permitted count — the raw material Evaluate needs to allow CONFIRMED.
+func corroborationFromTrials(trials []domain.ConcurrentTrial, limit int) []string {
+	var corroboration []string
+	maxDistinct, maxPersisted := 0, 0
+	sawBodyDiff, sawPostState := false, false
+	for _, t := range trials {
+		if v, ok := t.Observables["body_diff_distinct_effects"].(int); ok {
+			sawBodyDiff = true
+			if v > maxDistinct {
+				maxDistinct = v
+			}
+		}
+		if v, ok := t.Observables["post_state_count"].(int); ok {
+			sawPostState = true
+			if v > maxPersisted {
+				maxPersisted = v
+			}
+		}
+	}
+	if sawBodyDiff && oracle.Level2Corroborates(maxDistinct, limit) {
+		corroboration = append(corroboration, "body_differential")
+	}
+	if sawPostState && oracle.Level4Corroborates(maxPersisted, limit) {
+		corroboration = append(corroboration, "post_state")
+	}
+	return corroboration
 }
 
 func prepareInstances(ctx context.Context, cfg RunConfig, actSpec domain.RequestSpec, baseURL string, n int) ([]sync.PreparedRequest, error) {

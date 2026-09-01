@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,18 +64,40 @@ func TestLoadCandidate_RejectsUnknownField(t *testing.T) {
 	}
 }
 
-func TestLoadCandidate_RejectsUnsupportedInvariantType(t *testing.T) {
+func TestLoadCandidate_RejectsUnknownInvariantType(t *testing.T) {
 	yaml := `
 workflow:
   requests:
     - {id: r1, method: POST, url: /x}
   act_request: r1
 session_ref: session.json
-invariant: {type: uniqueness, value: 1}
+invariant: {type: made_up_type, value: 1}
 `
 	path := writeTemp(t, "candidate.yaml", yaml)
 	if _, err := LoadCandidate(path); err == nil {
-		t.Fatal("expected LoadCandidate to reject invariant.type != max_successes in Phase 1")
+		t.Fatal("expected LoadCandidate to reject an invariant.type outside the canonical four")
+	}
+}
+
+func TestLoadCandidate_AcceptsAllFourCanonicalInvariantTypes(t *testing.T) {
+	for _, invType := range []string{"max_successes", "uniqueness", "monotonic_limit", "single_transition"} {
+		yaml := fmt.Sprintf(`
+workflow:
+  requests:
+    - {id: r1, method: POST, url: /x}
+  act_request: r1
+session_ref: session.json
+invariant: {type: %s, value: 1}
+`, invType)
+		path := writeTemp(t, "candidate-"+invType+".yaml", yaml)
+		c, err := LoadCandidate(path)
+		if err != nil {
+			t.Errorf("LoadCandidate rejected canonical type %q: %v", invType, err)
+			continue
+		}
+		if string(c.Invariant.Type) != invType {
+			t.Errorf("Invariant.Type = %q, want %q", c.Invariant.Type, invType)
+		}
 	}
 }
 

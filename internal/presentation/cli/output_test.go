@@ -73,6 +73,34 @@ func TestPrintFinding_ContainsUXRequiredFields(t *testing.T) {
 	}
 }
 
+func TestPrintFinding_ConfirmedShowsCorroboratingLevels(t *testing.T) {
+	var buf bytes.Buffer
+	f := sampleFinding()
+	f.Confidence = domain.Confirmed
+	f.Oracle.CorroboratingLevels = []int{2, 4}
+	o := domain.OracleResult{
+		Why:                      "S>1 in 5/6 independent trials, corroborated by an independent observable",
+		ConfidenceBandsVersion:   "provisional-v0",
+		CorroboratingObservables: []string{"body_differential", "post_state"},
+	}
+	printFinding(&buf, f, o)
+	out := buf.String()
+
+	for _, want := range []string{
+		"[CONFIRMED]",
+		"CONCURRENCY INTEGRITY VIOLATION",
+		"corrob.  Level-2 body-differential",
+		"corrob.  Level-4 post-state",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("CONFIRMED finding output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "no Level-2/4 corroboration") {
+		t.Error("must not print the no-corroboration note when corroboration exists")
+	}
+}
+
 func TestExitForResult(t *testing.T) {
 	cases := []struct {
 		name string

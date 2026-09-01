@@ -10,23 +10,29 @@ import (
 // buildFinding packages a confirmed-or-likely violation as a self-contained
 // Reproduction bundle (Design/DOMAIN.md §Reproduction, Design/DATA_MODEL.md
 // §9 findings/<id>.rv). Only called when Evaluate reported found=true.
-func buildFinding(cfg RunConfig, result domain.OracleResult, trials []domain.ConcurrentTrial) domain.Finding {
-	minimalN, maxS, syncStrategy := summarizeTrialsForFinding(trials)
+// ConcurrencyN and the Workflow reflect the minimized reproducer, not the
+// starting N/request set (Design/ARCHITECTURE.md §6: minimization exists so
+// the .rv hands a human the smallest useful reproduction).
+func buildFinding(cfg RunConfig, result domain.OracleResult, trials []domain.ConcurrentTrial, m domain.Minimization) domain.Finding {
+	_, maxS, syncStrategy := summarizeTrialsForFinding(trials)
+
+	workflow := cfg.Candidate.Workflow
+	workflow.SetupRequests = m.Workflow.MinimalRequests
 
 	return domain.Finding{
 		RVVersion:            "1",
 		FindingID:            "find_" + strings.TrimPrefix(cfg.Candidate.ID, "cand_"),
 		Target:               cfg.Scope.Target,
 		ScopeRef:             domain.ScopeRef{AuthorizedBy: cfg.Scope.AuthorizedBy},
-		Workflow:             cfg.Candidate.Workflow,
+		Workflow:             workflow,
 		SessionBootstrap:     domain.SessionBootstrap{IsolationGroup: cfg.Session.IsolationGroup},
 		Invariant:            cfg.Candidate.Invariant,
 		RequiredProofEffects: result.RequiredProofEffects,
 		SyncStrategy:         syncStrategy,
-		ConcurrencyN:         minimalN,
+		ConcurrencyN:         m.Concurrency.MinimalN,
 		Oracle: domain.FindingOracleSummary{
 			PrimaryLevels:       result.PrimaryOracleLevels,
-			CorroboratingLevels: nil,
+			CorroboratingLevels: corroboratingLevels(result.CorroboratingObservables),
 			SuccessSignature:    matcherOrInferred(cfg.Candidate.SuccessWhen, nil),
 			RejectSignature:     matcherOrInferred(cfg.Candidate.RejectWhen, nil),
 			PostStateProbe:      cfg.Candidate.PostStateProbe,
@@ -45,6 +51,22 @@ func buildFinding(cfg RunConfig, result domain.OracleResult, trials []domain.Con
 		Created:      time.Now().UTC(),
 		RNGSeed:      cfg.Seed,
 	}
+}
+
+// corroboratingLevels maps corroborating-observable names to their Oracle
+// level numbers (Design/ARCHITECTURE.md §4: Level 2 body-differential,
+// Level 4 post-state).
+func corroboratingLevels(observables []string) []int {
+	var levels []int
+	for _, o := range observables {
+		switch o {
+		case "body_differential":
+			levels = append(levels, 2)
+		case "post_state":
+			levels = append(levels, 4)
+		}
+	}
+	return levels
 }
 
 // summarizeTrialsForFinding picks the smallest N among violating trials (the

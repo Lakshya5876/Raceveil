@@ -17,6 +17,17 @@ type PostStateProbe struct {
 	Extract string `yaml:"extract" json:"extract"`
 }
 
+// BodyDifferential names a field to extract from each successful Act
+// response body during the concurrent burst — the raw material for Level 2
+// corroboration (Design/ARCHITECTURE.md §4): distinct extracted values
+// (e.g. distinct receipt/order ids, or a decremented balance) corroborate
+// that a Level-3 S>L violation reflects genuinely distinct effects, not a
+// classifier miscount. Level 5 configuration (candidate.yaml), not a
+// separate evidence tier.
+type BodyDifferential struct {
+	Extract string `yaml:"extract" json:"extract"`
+}
+
 // ResetRecipeKind is one of the four executable reset strategies that
 // establish State Independence (Design/DOMAIN.md §State Independence).
 // Phase 1 implements FreshCode and SetupRecipe only.
@@ -41,14 +52,15 @@ type ResetRecipe struct {
 // Both declared (candidate.yaml, MVP) and inferred (v1 discovery) origins
 // normalize to this one representation.
 type Candidate struct {
-	ID             string          `json:"id"`
-	Source         string          `json:"source"` // "declared" | "inferred"
-	Score          *float64        `json:"score"`
-	Workflow       Workflow        `json:"workflow"`
-	SessionRef     string          `yaml:"session_ref" json:"session_ref"`
-	Invariant      Invariant       `json:"invariant"`
-	SuccessWhen    *Matcher        `yaml:"success_when,omitempty" json:"success_when,omitempty"`
-	RejectWhen     *Matcher        `yaml:"reject_when,omitempty" json:"reject_when,omitempty"`
-	PostStateProbe *PostStateProbe `yaml:"post_state_probe,omitempty" json:"post_state_probe,omitempty"`
-	ResetRecipe    *ResetRecipe    `yaml:"reset_recipe,omitempty" json:"reset_recipe,omitempty"`
+	ID               string            `json:"id"`
+	Source           string            `json:"source"` // "declared" | "inferred"
+	Score            *float64          `json:"score"`
+	Workflow         Workflow          `json:"workflow"`
+	SessionRef       string            `yaml:"session_ref" json:"session_ref"`
+	Invariant        Invariant         `json:"invariant"`
+	SuccessWhen      *Matcher          `yaml:"success_when,omitempty" json:"success_when,omitempty"`
+	RejectWhen       *Matcher          `yaml:"reject_when,omitempty" json:"reject_when,omitempty"`
+	PostStateProbe   *PostStateProbe   `yaml:"post_state_probe,omitempty" json:"post_state_probe,omitempty"`
+	BodyDifferential *BodyDifferential `yaml:"body_differential,omitempty" json:"body_differential,omitempty"`
+	ResetRecipe      *ResetRecipe      `yaml:"reset_recipe,omitempty" json:"reset_recipe,omitempty"`
 }

@@ -31,11 +31,13 @@ type Server struct {
 	srv  *http.Server
 	ln   net.Listener
 
-	vulnMu    sync.Mutex
-	vulnCodes map[string]bool // code -> unused
+	vulnMu       sync.Mutex
+	vulnCodes    map[string]bool // code -> unused
+	vulnRedeemed int             // persisted count of successful vulnerable redemptions
 
-	safeMu    sync.Mutex
-	safeCodes map[string]bool // code -> unused
+	safeMu       sync.Mutex
+	safeCodes    map[string]bool // code -> unused
+	safeRedeemed int             // persisted count of successful safe redemptions
 }
 
 // New builds a Server bound to addr (e.g. "127.0.0.1:18743"). It does not
@@ -49,8 +51,10 @@ func New(addr string) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/issue-code", s.handleIssue(&s.vulnMu, s.vulnCodes))
 	mux.HandleFunc("/redeem", s.handleRedeemVulnerable)
+	mux.HandleFunc("/redemptions", s.handleRedemptionsProbe(&s.vulnMu, &s.vulnRedeemed))
 	mux.HandleFunc("/issue-code-safe", s.handleIssue(&s.safeMu, s.safeCodes))
 	mux.HandleFunc("/redeem-safe", s.handleRedeemSafe)
+	mux.HandleFunc("/redemptions-safe", s.handleRedemptionsProbe(&s.safeMu, &s.safeRedeemed))
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	return s
 }
@@ -121,6 +125,15 @@ type redeemRequest struct {
 	Code string `json:"code"`
 }
 
+type redeemResponse struct {
+	Status    string `json:"status"`
+	ReceiptID string `json:"receipt_id"`
+}
+
+type redemptionsResponse struct {
+	Count int `json:"count"`
+}
+
 func decodeRedeem(r *http.Request) (string, error) {
 	var body redeemRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -151,10 +164,16 @@ func (s *Server) handleRedeemVulnerable(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	time.Sleep(3 * time.Millisecond)
+	receipt, err := randomCode()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	s.vulnMu.Lock()
 	s.vulnCodes[code] = false
+	s.vulnRedeemed++
 	s.vulnMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]string{"status": "redeemed"})
+	writeJSON(w, http.StatusOK, redeemResponse{Status: "redeemed", ReceiptID: receipt})
 }
 
 // handleRedeemSafe performs the identical check-then-act under one held
@@ -166,17 +185,40 @@ func (s *Server) handleRedeemSafe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	receipt, err := randomCode()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	s.safeMu.Lock()
 	valid := s.safeCodes[code]
 	if valid {
 		s.safeCodes[code] = false
+		s.safeRedeemed++
 	}
 	s.safeMu.Unlock()
 	if !valid {
 		http.Error(w, "already used", http.StatusConflict)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "redeemed"})
+	writeJSON(w, http.StatusOK, redeemResponse{Status: "redeemed", ReceiptID: receipt})
+}
+
+// handleRedemptionsProbe is the Level 4 read-only post-state probe: it
+// returns the persisted count of successful redemptions so far, letting the
+// Oracle corroborate a Level-3 violation via persisted state instead of
+// just response classification (Design/ARCHITECTURE.md §4).
+func (s *Server) handleRedemptionsProbe(mu *sync.Mutex, count *int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		mu.Lock()
+		n := *count
+		mu.Unlock()
+		writeJSON(w, http.StatusOK, redemptionsResponse{Count: n})
+	}
 }
 
 func randomCode() (string, error) {

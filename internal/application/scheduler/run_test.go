@@ -57,6 +57,13 @@ func redeemCandidate(issuePath, redeemPath string) domain.Candidate {
 	}
 }
 
+func redeemCandidateWithCorroboration(issuePath, redeemPath, probePath string) domain.Candidate {
+	c := redeemCandidate(issuePath, redeemPath)
+	c.BodyDifferential = &domain.BodyDifferential{Extract: "$.receipt_id"}
+	c.PostStateProbe = &domain.PostStateProbe{Method: "GET", Path: probePath, Extract: "$.count"}
+	return c
+}
+
 func startFixture(t *testing.T) *fixtureserver.Server {
 	t.Helper()
 	srv := fixtureserver.New("127.0.0.1:0")
@@ -104,7 +111,7 @@ func TestRun_VulnerableFixture_ProducesLikelyFinding(t *testing.T) {
 		t.Fatal("expected a Finding against the vulnerable check-then-act fixture")
 	}
 	if outcome.Oracle.Confidence != domain.Likely {
-		t.Errorf("Confidence = %v, want LIKELY (Level 3 alone, no corroboration in Phase 1)", outcome.Oracle.Confidence)
+		t.Errorf("Confidence = %v, want LIKELY (Level 3 alone — this candidate declares no Level 2/4 corroboration)", outcome.Oracle.Confidence)
 	}
 	if outcome.Finding == nil {
 		t.Fatal("expected a non-nil Finding")
@@ -117,6 +124,80 @@ func TestRun_VulnerableFixture_ProducesLikelyFinding(t *testing.T) {
 	}
 	if outcome.Finding.StateIndependence != domain.Independent {
 		t.Errorf("StateIndependence = %v, want independent (fresh_code reset recipe)", outcome.Finding.StateIndependence)
+	}
+}
+
+func TestRun_VulnerableFixtureWithCorroboration_ProducesConfirmedFinding(t *testing.T) {
+	srv := startFixture(t)
+	candidate := redeemCandidateWithCorroboration("/issue-code", "/redeem", "/redemptions")
+	cfg := runConfig(t, candidate, "http://"+srv.Addr())
+
+	outcome, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !outcome.Found {
+		t.Fatal("expected a Finding against the vulnerable fixture")
+	}
+	if outcome.Oracle.Confidence != domain.Confirmed {
+		t.Fatalf("Confidence = %v, want CONFIRMED (Level 3 + real Level 2/4 corroboration from the fixture's receipt_id and /redemptions probe)", outcome.Oracle.Confidence)
+	}
+	if len(outcome.Oracle.CorroboratingObservables) == 0 {
+		t.Error("expected at least one corroborating observable to be recorded")
+	}
+	if outcome.Finding.Confidence != domain.Confirmed {
+		t.Errorf("Finding.Confidence = %v, want CONFIRMED", outcome.Finding.Confidence)
+	}
+	if len(outcome.Finding.Oracle.CorroboratingLevels) == 0 {
+		t.Error("expected Finding.Oracle.CorroboratingLevels to be populated")
+	}
+}
+
+func TestRun_SafeTwinWithCorroboration_NoFinding(t *testing.T) {
+	// The false-positive gate must hold even with corroboration configured:
+	// a properly-locked endpoint must still report clean, not a
+	// weakly-corroborated finding.
+	srv := startFixture(t)
+	candidate := redeemCandidateWithCorroboration("/issue-code-safe", "/redeem-safe", "/redemptions-safe")
+	cfg := runConfig(t, candidate, "http://"+srv.Addr())
+
+	outcome, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Found {
+		t.Fatalf("expected no Finding against the synchronized-safe twin even with corroboration configured, got Confidence=%v", outcome.Oracle.Confidence)
+	}
+}
+
+func TestRun_PopulatesMinimizationResult(t *testing.T) {
+	srv := startFixture(t)
+	candidate := redeemCandidate("/issue-code", "/redeem")
+	cfg := runConfig(t, candidate, "http://"+srv.Addr())
+
+	outcome, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !outcome.Found {
+		t.Fatal("expected a Finding")
+	}
+	// The fixture races reliably even at N=2, so minimization should settle
+	// there — and ConcurrencyN on the Finding should reflect that minimized
+	// N, not just whatever N the last trial happened to run at.
+	if outcome.Finding.ConcurrencyN < 2 {
+		t.Errorf("Finding.ConcurrencyN = %d, want >= 2", outcome.Finding.ConcurrencyN)
+	}
+	// SetupRequests can't be minimized below "issue_code" (the Act request's
+	// CODE binding depends on it), so it must still be present.
+	found := false
+	for _, id := range outcome.Finding.Workflow.SetupRequests {
+		if id == "issue_code" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected minimized SetupRequests to still include the required issue_code, got %v", outcome.Finding.Workflow.SetupRequests)
 	}
 }
 

@@ -107,6 +107,12 @@ func (w *Writer) PersistOracle(candidateID string, result domain.OracleResult) e
 	return w.writeExperimentJSON(candidateID, "oracle.json", result)
 }
 
+// PersistMinimization writes experiments/<id>/minimization.json
+// (Design/DATA_MODEL.md §8).
+func (w *Writer) PersistMinimization(candidateID string, m domain.Minimization) error {
+	return w.writeExperimentJSON(candidateID, "minimization.json", m)
+}
+
 // PersistFinding writes findings/<id>.rv (Design/DATA_MODEL.md §9).
 func (w *Writer) PersistFinding(finding domain.Finding) error {
 	id, err := sanitizeID(finding.FindingID)

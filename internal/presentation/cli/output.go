@@ -54,7 +54,15 @@ func printFinding(w io.Writer, f domain.Finding, o domain.OracleResult) {
 		rep.RViolations, rep.KIndependent, f.StateIndependence, rep.Wilson95[0])
 	_, _ = fmt.Fprintf(w, "  Evidence      primary  Level-3 cross-request: %d distinct successful effects observed\n", f.ObservedAtCreation.S)
 	if len(o.CorroboratingObservables) == 0 {
-		_, _ = fmt.Fprintln(w, "                (no Level-2/4 corroboration available in Phase 1)")
+		_, _ = fmt.Fprintln(w, "                (no Level-2/4 corroboration available for this candidate)")
+	}
+	for _, level := range f.Oracle.CorroboratingLevels {
+		switch level {
+		case 2:
+			_, _ = fmt.Fprintln(w, "                corrob.  Level-2 body-differential: distinct effect signatures exceed the invariant")
+		case 4:
+			_, _ = fmt.Fprintln(w, "                corrob.  Level-4 post-state: persisted count exceeds the invariant")
+		}
 	}
 	_, _ = fmt.Fprintf(w, "  Confidence    %s  (%s;\n                confidence bands %s — provisional, pending corpus calibration)\n",
 		f.Confidence, o.Why, o.ConfidenceBandsVersion)
