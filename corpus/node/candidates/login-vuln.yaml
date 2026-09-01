@@ -1,0 +1,19 @@
+workflow:
+  requests:
+    - id: issue
+      method: POST
+      url: /login/issue-username
+    - id: attempt
+      method: POST
+      url: /login/attempt
+      headers: {content-type: application/json}
+      body: '{"username":"${USERNAME}"}'
+      bindings: [{name: USERNAME, in: body, from: issue.$.username}]
+  act_request: attempt
+setup_requests: [issue]
+session_ref: session.json
+invariant: {type: max_successes, value: 3}
+success_when: {status: 200}
+reject_when: {status: 429}
+body_differential: {extract: "$.receipt_id"}
+reset_recipe: {kind: fresh_code, setup_ref: issue, how: "issue a fresh username (0 prior attempts) before each trial"}

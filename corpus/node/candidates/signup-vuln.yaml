@@ -1,0 +1,19 @@
+workflow:
+  requests:
+    - id: issue
+      method: POST
+      url: /signup/issue-username
+    - id: signup
+      method: POST
+      url: /signup
+      headers: {content-type: application/json}
+      body: '{"username":"${USERNAME}"}'
+      bindings: [{name: USERNAME, in: body, from: issue.$.username}]
+  act_request: signup
+setup_requests: [issue]
+session_ref: session.json
+invariant: {type: uniqueness, value: 1}
+success_when: {status: 200}
+reject_when: {status: 409}
+body_differential: {extract: "$.user_id"}
+reset_recipe: {kind: fresh_code, setup_ref: issue, how: "issue a fresh candidate username before each trial"}

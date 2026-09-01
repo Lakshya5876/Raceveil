@@ -1,0 +1,19 @@
+workflow:
+  requests:
+    - id: issue
+      method: POST
+      url: /giftcard/issue-safe
+    - id: redeem
+      method: POST
+      url: /giftcard/redeem-safe
+      headers: {content-type: application/json}
+      body: '{"code":"${CODE}"}'
+      bindings: [{name: CODE, in: body, from: issue.$.code}]
+  act_request: redeem
+setup_requests: [issue]
+session_ref: session.json
+invariant: {type: max_successes, value: 1}
+success_when: {status: 200}
+reject_when: {status: 409}
+body_differential: {extract: "$.receipt_id"}
+reset_recipe: {kind: fresh_code, setup_ref: issue, how: "issue a fresh gift card before each trial"}

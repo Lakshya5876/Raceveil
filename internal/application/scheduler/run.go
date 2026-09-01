@@ -77,7 +77,7 @@ func Run(ctx context.Context, cfg RunConfig) (Outcome, error) {
 		return Outcome{}, err
 	}
 
-	baseline, err := runBaseline(ctx, cfg, baseURL, required)
+	baseline, err := runBaseline(ctx, cfg, baseURL)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("baseline: %w", err)
 	}

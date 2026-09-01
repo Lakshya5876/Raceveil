@@ -26,14 +26,15 @@ type yamlWorkflow struct {
 // yamlCandidate is the exact, strict shape of candidate.yaml
 // (Design/DATA_MODEL.md §MVP candidate input, Phase-1 contract).
 type yamlCandidate struct {
-	Workflow       yamlWorkflow           `yaml:"workflow"`
-	SetupRequests  []string               `yaml:"setup_requests"`
-	SessionRef     string                 `yaml:"session_ref"`
-	Invariant      domain.Invariant       `yaml:"invariant"`
-	SuccessWhen    *domain.Matcher        `yaml:"success_when"`
-	RejectWhen     *domain.Matcher        `yaml:"reject_when"`
-	PostStateProbe *domain.PostStateProbe `yaml:"post_state_probe"`
-	ResetRecipe    *domain.ResetRecipe    `yaml:"reset_recipe"`
+	Workflow         yamlWorkflow             `yaml:"workflow"`
+	SetupRequests    []string                 `yaml:"setup_requests"`
+	SessionRef       string                   `yaml:"session_ref"`
+	Invariant        domain.Invariant         `yaml:"invariant"`
+	SuccessWhen      *domain.Matcher          `yaml:"success_when"`
+	RejectWhen       *domain.Matcher          `yaml:"reject_when"`
+	PostStateProbe   *domain.PostStateProbe   `yaml:"post_state_probe"`
+	BodyDifferential *domain.BodyDifferential `yaml:"body_differential"`
+	ResetRecipe      *domain.ResetRecipe      `yaml:"reset_recipe"`
 }
 
 // LoadCandidate reads and strictly validates a candidate.yaml against the
@@ -67,12 +68,13 @@ func LoadCandidate(path string) (domain.Candidate, error) {
 			ActRequest:    yc.Workflow.ActRequest,
 			SetupRequests: yc.SetupRequests,
 		},
-		SessionRef:     yc.SessionRef,
-		Invariant:      withDeclaredSource(yc.Invariant),
-		SuccessWhen:    yc.SuccessWhen,
-		RejectWhen:     yc.RejectWhen,
-		PostStateProbe: yc.PostStateProbe,
-		ResetRecipe:    yc.ResetRecipe,
+		SessionRef:       yc.SessionRef,
+		Invariant:        withDeclaredSource(yc.Invariant),
+		SuccessWhen:      yc.SuccessWhen,
+		RejectWhen:       yc.RejectWhen,
+		PostStateProbe:   yc.PostStateProbe,
+		BodyDifferential: yc.BodyDifferential,
+		ResetRecipe:      yc.ResetRecipe,
 	}, nil
 }
 
