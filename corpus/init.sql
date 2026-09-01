@@ -32,6 +32,12 @@ CREATE TABLE login_safe (username TEXT PRIMARY KEY, attempts INT NOT NULL DEFAUL
 CREATE TABLE orders_vuln (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending');
 CREATE TABLE orders_safe (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending');
 
+-- Level 4 post-state probe support (Node coupon archetype): a log of
+-- successful redemption events, time-windowed by the probe so a probe
+-- reflects "this trial's burst" rather than an all-time total that would
+-- accumulate across trials and falsely corroborate later trials.
+CREATE TABLE redemption_events (id SERIAL PRIMARY KEY, archetype TEXT NOT NULL, occurred_at TIMESTAMPTZ NOT NULL DEFAULT now());
+
 -- Spring Boot corpus subset (Design/TEST_PLAN.md Layer 5: at minimum two
 -- stacks). "_spring" tables are the same three archetypes reimplemented in
 -- Spring Boot, kept separate from the Node app's tables so the two corpus

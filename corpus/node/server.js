@@ -53,7 +53,20 @@ app.post('/coupon/redeem', async (req, res, next) => {
     }
     await sleep(RACE_WINDOW_MS);
     await pool.query('UPDATE coupons_vuln SET used = true WHERE code = $1', [code]);
+    await pool.query("INSERT INTO redemption_events (archetype) VALUES ('coupon_vuln')");
     res.json({ status: 'redeemed', receipt_id: randomId() });
+  } catch (err) { next(err); }
+});
+
+// Level 4 post-state probe: the persisted count of coupon redemptions in
+// the last 3 seconds — time-windowed so the probe reflects the most recent
+// burst rather than an all-time total that would accumulate across trials.
+app.get('/coupon/redemptions', async (_req, res, next) => {
+  try {
+    const result = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM redemption_events WHERE archetype = 'coupon_vuln' AND occurred_at > now() - interval '3 seconds'",
+    );
+    res.json({ count: result.rows[0].count });
   } catch (err) { next(err); }
 });
 

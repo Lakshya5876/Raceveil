@@ -16,4 +16,5 @@ invariant: {type: max_successes, value: 1}
 success_when: {status: 200}
 reject_when: {status: 409}
 body_differential: {extract: "$.receipt_id"}
+post_state_probe: {method: GET, path: /coupon/redemptions, extract: "$.count"}
 reset_recipe: {kind: fresh_code, setup_ref: issue, how: "issue a fresh coupon before each trial"}
