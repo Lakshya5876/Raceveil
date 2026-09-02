@@ -23,8 +23,8 @@ type EvaluateInput struct {
 	Trials               []domain.ConcurrentTrial
 	// CorroboratingObservables lists Level 2/4 observables that corroborate
 	// the Level 3 violation (Design/ARCHITECTURE.md §4 corroboration rule).
-	// Phase 1 implements only Levels 1+3, so callers always pass nil/empty
-	// here — see the CONFIRMED-unreachable guard in Evaluate.
+	// Empty when the Candidate declares neither a body_differential nor a
+	// post_state_probe, which caps the verdict at LIKELY by design.
 	CorroboratingObservables []string
 }
 
@@ -53,7 +53,7 @@ func Evaluate(in EvaluateInput) (result domain.OracleResult, found bool) {
 		Invariant:                  in.Invariant,
 		RequiredProofEffects:       in.RequiredProofEffects,
 		PrimaryOracleLevels:        []int{3},
-		LevelsEvaluated:            []int{1, 3},
+		LevelsEvaluated:            levelsEvaluated(in.CorroboratingObservables),
 		StateIndependence:          aggregateStateIndependence(in.Trials),
 		ConfidenceBandsVersion:     ConfirmedBandsVersion,
 		CorroboratingObservables:   in.CorroboratingObservables,
@@ -86,16 +86,34 @@ func Evaluate(in EvaluateInput) (result domain.OracleResult, found bool) {
 		corroboration:        in.CorroboratingObservables,
 	})
 	if confidence == domain.Confirmed && len(in.CorroboratingObservables) == 0 {
-		// Phase 1 implements only Oracle Levels 1+3; Levels 2/4 (the only
-		// corroboration sources, Design/ARCHITECTURE.md §4) don't exist yet.
-		// Reaching this branch means classifyConfidence has a bug, not that
-		// the evidence is weak — fail loudly rather than silently mislabel.
-		panic(fmt.Sprintf("oracle: CONFIRMED is unreachable in Phase 1 (candidate %s had no corroborating observable) — classifyConfidence logic error", in.CandidateID))
+		// CONFIRMED requires a Level 2/4 corroborating observable
+		// (Design/ARCHITECTURE.md §4 corroboration rule) — reaching this
+		// branch with none present means classifyConfidence has a bug, not
+		// that the evidence is weak. Fail loudly rather than silently
+		// mislabel a Finding as more certain than its evidence supports.
+		panic(fmt.Sprintf("oracle: CONFIRMED reached without a corroborating observable (candidate %s) — classifyConfidence logic error", in.CandidateID))
 	}
 	result.Confidence = confidence
 	result.Severity = severityFor(in.Invariant)
 	result.Why = explain(confidence, rViolations, kIndependent, wilsonLo, in.Invariant)
 	return result, true
+}
+
+// levelsEvaluated reports which Oracle levels actually produced evidence for
+// this Experiment: Level 1 (structural classification) and Level 3
+// (cross-request consistency) always run; Level 2/4 are added only when the
+// Candidate declared the corresponding corroboration source and it fired.
+func levelsEvaluated(corroboration []string) []int {
+	levels := []int{1, 3}
+	for _, o := range corroboration {
+		switch o {
+		case "body_differential":
+			levels = append(levels, 2)
+		case "post_state":
+			levels = append(levels, 4)
+		}
+	}
+	return levels
 }
 
 func aggregateStateIndependence(trials []domain.ConcurrentTrial) domain.StateIndependence {

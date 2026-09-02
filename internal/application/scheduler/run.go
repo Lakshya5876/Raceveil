@@ -31,6 +31,11 @@ const (
 	maxTrials     = 6
 	escalateAfter = 3
 
+	// warmUpTrials prime connection/JIT/cache state before any trial counts
+	// as evidence, so a cold first burst is not mistaken for signal
+	// (Design/ARCHITECTURE.md §5). Their results are discarded.
+	warmUpTrials = 1
+
 	// minimizeTrialsPerStep is K_min: fresh trials run at each concurrency
 	// step during minimization (Design/ARCHITECTURE.md §6 ADR-014).
 	minimizeTrialsPerStep = 3

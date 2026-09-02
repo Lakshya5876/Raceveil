@@ -41,7 +41,9 @@ func TestEvaluate_NonIdempotentNoInvariant_IsSchedulerConcern(t *testing.T) {
 
 func TestEvaluate_Level3Alone_CapsAtLikely(t *testing.T) {
 	// TEST_PLAN.md Layer 3 corroboration matrix: Level 3 alone (no Level
-	// 2/4) can never reach CONFIRMED, even with strong reproduction.
+	// 2/4, e.g. the Candidate declared neither a body_differential nor a
+	// post_state_probe) can never reach CONFIRMED, even with strong
+	// reproduction.
 	trials := []domain.ConcurrentTrial{
 		trial(1, true, domain.Independent),
 		trial(2, true, domain.Independent),
@@ -55,7 +57,7 @@ func TestEvaluate_Level3Alone_CapsAtLikely(t *testing.T) {
 		t.Fatal("expected a Finding")
 	}
 	if result.Confidence != domain.Likely {
-		t.Errorf("Confidence = %v, want LIKELY (no corroboration available in Phase 1)", result.Confidence)
+		t.Errorf("Confidence = %v, want LIKELY (no corroborating observable supplied)", result.Confidence)
 	}
 	if result.Trials.KIndependent != 6 || result.Trials.RViolations != 5 {
 		t.Errorf("K/r = %d/%d, want 6/5", result.Trials.KIndependent, result.Trials.RViolations)
@@ -63,10 +65,11 @@ func TestEvaluate_Level3Alone_CapsAtLikely(t *testing.T) {
 }
 
 func TestEvaluate_Level3PlusCorroboration_CanReachConfirmed(t *testing.T) {
-	// Proves classifyConfidence's CONFIRMED path is correct in isolation —
-	// once Phase 2 wires up real Level 2/4 corroboration, this is the
-	// behavior it will exercise. Phase 1's own Evaluate call sites never
-	// pass corroboration (see the CONFIRMED-unreachable test below).
+	// Proves classifyConfidence's CONFIRMED path: with Level 3 (cross-request
+	// consistency) plus a real Level 2/4 corroborating observable — wired by
+	// the scheduler in trials.go's collectCorroboration/corroborationFromTrials
+	// when the Candidate declares a body_differential or post_state_probe —
+	// strong reproduction reaches CONFIRMED.
 	in := baseInput([]domain.ConcurrentTrial{
 		trial(1, true, domain.Independent),
 		trial(2, true, domain.Independent),
@@ -86,10 +89,10 @@ func TestEvaluate_Level3PlusCorroboration_CanReachConfirmed(t *testing.T) {
 }
 
 func TestClassifyConfidence_NeverConfirmsWithoutCorroboration(t *testing.T) {
-	// This is the actual guarantee behind the CONFIRMED-unreachable claim:
-	// classifyConfidence refuses CONFIRMED for any r/k/wilsonLo combination
-	// once corroboration is empty — exactly Phase 1's call shape, since no
-	// Evaluate call site here ever supplies Level 2/4 observables.
+	// The corroboration-rule guarantee: classifyConfidence refuses CONFIRMED
+	// for any r/k/wilsonLo combination once corroboration is empty — the
+	// shape of any Experiment whose Candidate declared neither a
+	// body_differential nor a post_state_probe.
 	cases := []classifyInput{
 		{rViolations: 2, kIndependent: 2, wilsonLo: 0.99, classifierSeparation: "clean"},
 		{rViolations: 10, kIndependent: 10, wilsonLo: 0.80, classifierSeparation: "clean"},
@@ -102,9 +105,9 @@ func TestClassifyConfidence_NeverConfirmsWithoutCorroboration(t *testing.T) {
 	}
 }
 
-func TestEvaluate_ConfirmedUnreachableInPhase1(t *testing.T) {
-	// Every real Phase 1 Evaluate call (scheduler never populates
-	// CorroboratingObservables — Levels 2/4 don't exist yet) must produce a
+func TestEvaluate_NoCorroboration_NeverConfirmed(t *testing.T) {
+	// An Evaluate call with no corroborating observables (the Candidate
+	// declared no body_differential/post_state_probe) must produce a
 	// Confidence other than CONFIRMED, and must not panic doing so: the
 	// panic in Evaluate is a defensive guard against a future
 	// classifyConfidence regression, not a path this test should trigger.

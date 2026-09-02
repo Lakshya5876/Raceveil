@@ -22,6 +22,7 @@ func runTrials(ctx context.Context, cfg RunConfig, baseURL string, baseline doma
 		return nil, fmt.Errorf("act_request %q not found in workflow.requests", cfg.Candidate.Workflow.ActRequest)
 	}
 	success, reject := classifierFromBaseline(baseline)
+	classifierSeparation := baseline.ClassifierSeparation
 	tc := trialContext{
 		cfg:        cfg,
 		baseURL:    baseURL,
@@ -32,22 +33,53 @@ func runTrials(ctx context.Context, cfg RunConfig, baseURL string, baseline doma
 		stateIndep: stateIndependenceFor(cfg.Candidate),
 	}
 
+	tc.warmUp(ctx)
+	return tc.runLoop(ctx, classifierSeparation)
+}
+
+// warmUp primes connections, JIT, and caches so a cold first trial is not
+// mistaken for signal (Design/ARCHITECTURE.md §5). Its result is discarded —
+// it is not evidence, and it never enters K_independent. A warm-up that
+// fails is not fatal: the real trials will report the same problem with
+// better context.
+func (tc trialContext) warmUp(ctx context.Context) {
+	for i := 0; i < warmUpTrials; i++ {
+		_, _ = tc.runOne(ctx, 0, concurrencyLadder[0])
+	}
+}
+
+// runLoop runs the concurrent-trial loop proper: concurrency-level
+// escalation and the stopping criteria live here, factored out of runTrials
+// to keep both under the complexity threshold.
+func (tc trialContext) runLoop(ctx context.Context, classifierSeparation string) ([]domain.ConcurrentTrial, error) {
 	var trials []domain.ConcurrentTrial
 	ladderIdx := 0
-	violationsSoFar := 0
+	violations, independent := 0, 0
 	for trialNum := 1; trialNum <= maxTrials; trialNum++ {
-		if trialNum > escalateAfter && violationsSoFar == 0 && ladderIdx < len(concurrencyLadder)-1 {
+		// Concurrency-level sweep: escalate N only if nothing has reproduced
+		// yet, because race windows have a minimum N to line up
+		// (Design/ARCHITECTURE.md §5).
+		if trialNum > escalateAfter && violations == 0 && ladderIdx < len(concurrencyLadder)-1 {
 			ladderIdx++
 		}
 		trial, err := tc.runOne(ctx, trialNum, concurrencyLadder[ladderIdx])
 		if err != nil {
 			return nil, fmt.Errorf("trial %d: %w", trialNum, err)
 		}
-		if trial.Violation {
-			violationsSoFar++
-		}
 		trials = append(trials, trial)
-		if violationsSoFar >= 2 && trialNum >= 3 {
+		if trial.StateIndependence == domain.Independent {
+			independent++
+			if trial.Violation {
+				violations++
+			}
+		}
+
+		// Stopping criteria: stop as soon as no remaining trial could change
+		// the verdict. Running trials that cannot teach us anything would
+		// just cause more effects on the target for no evidential gain.
+		remaining := maxTrials - trialNum
+		if !oracle.BandCanStillChange(violations, independent, remaining,
+			classifierSeparation, corroborationFromTrials(trials, tc.cfg.Candidate.Invariant.Value)) {
 			break
 		}
 	}
