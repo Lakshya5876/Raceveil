@@ -1,0 +1,19 @@
+workflow:
+  requests:
+    - id: create
+      method: POST
+      url: /order/create-safe
+    - id: confirm
+      method: POST
+      url: /order/confirm-safe
+      headers: {content-type: application/json}
+      body: '{"id":"${ORDER_ID}"}'
+      bindings: [{name: ORDER_ID, in: body, from: create.$.id}]
+  act_request: confirm
+setup_requests: [create]
+session_ref: session.json
+invariant: {type: single_transition, value: 1}
+success_when: {status: 200}
+reject_when: {status: 409}
+body_differential: {extract: "$.receipt_id"}
+reset_recipe: {kind: fresh_code, setup_ref: create, how: "create a fresh pending order before each trial"}

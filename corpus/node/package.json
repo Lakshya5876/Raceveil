@@ -1,0 +1,14 @@
+{
+  "name": "raceveil-corpus-node",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RaceVeil Phase 2 seeded vulnerable corpus (Node/Express + PostgreSQL) — Design/TEST_PLAN.md Layer 5. Local-only, no external services.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}

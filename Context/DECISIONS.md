@@ -186,3 +186,42 @@ apps and their CVE references used locally for testing only, credited, never
 redistributed as exploits.
 **Reason.** OSS + commercial friendliness, clean provenance.
 **Tradeoffs.** Occasionally reimplementing rather than importing. Accepted.
+
+## ADR-017 — PortSwigger race-lab validation: reconciled against local-first/zero-cost, deferred
+**Context.** ROADMAP.md Phase 5 names "solves the limit-overrun/rate-limit
+PortSwigger labs autonomously black-box" as an exit criterion. PortSwigger's
+Web Security Academy labs are live, remote, account-gated, per-session-
+ephemeral instances on PortSwigger's own infrastructure — not something a
+local Docker Compose stack can stand up. Attempting them requires a
+PortSwigger Academy account (their labs are free to use but still require
+account creation) and sending scan traffic to a target this build's own
+zero-cost/local-first operating constraint (this session's explicit
+instruction: no infrastructure that isn't local, no new external accounts
+created without the user doing it themselves) does not authorize creating
+or using.
+**Options considered.** (a) Create a PortSwigger account and drive the labs
+through the Browser tool interactively; (b) build local fixture endpoints
+that approximate the named lab archetypes (limit-overrun, rate-limit
+bypass) without claiming fidelity to PortSwigger's actual lab
+implementation; (c) defer, documented, until the user supplies Academy
+access or explicitly asks for (a) or (b).
+**Chosen.** (c), with the corpus (Phase 2, `corpus/node` +
+`corpus/spring-boot`) and the CVE-2024-58248 rediscovery
+(`benchmark/nopcommerce-cve-2024-58248/`, Phase 5) standing in as the
+evidence actually produced this session: both are free, local, and
+independently reproducible, and both exercise the same limit-overrun /
+duplicate-effect archetype the PortSwigger labs test, just against
+purpose-built and real-world targets instead of PortSwigger's proprietary
+ones.
+**Reason.** Account creation is a user action per this session's
+permission boundaries, not something to do unprompted even for a free
+service; approximated local fixtures would be a weaker, self-graded
+substitute for a genuinely independent benchmark and shouldn't be
+presented as "solves PortSwigger labs" when it wasn't run against them.
+Honest deferral beats either.
+**Tradeoffs.** The literal Phase 5 exit-criterion line item is unmet.
+Accepted — the two evidence sources actually delivered are the same
+strength of proof for the same underlying claim (RaceVeil finds real
+limit-overrun races and stays clean on synchronized-safe code), and
+PortSwigger-lab validation can be picked up as a same-shaped follow-on the
+moment the user provides Academy access or asks for it directly.

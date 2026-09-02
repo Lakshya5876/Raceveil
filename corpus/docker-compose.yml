@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: raceveil
+      POSTGRES_PASSWORD: raceveil_corpus_local_only
+      POSTGRES_DB: raceveil_corpus
+    ports:
+      # 127.0.0.1 only — never exposed beyond localhost (matches
+      # internal/testutil/fixtureserver's own bind discipline).
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raceveil -d raceveil_corpus"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

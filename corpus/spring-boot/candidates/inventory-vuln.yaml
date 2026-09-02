@@ -1,0 +1,19 @@
+workflow:
+  requests:
+    - id: restock
+      method: POST
+      url: /inventory/restock
+    - id: reserve
+      method: POST
+      url: /inventory/reserve
+      headers: {content-type: application/json}
+      body: '{"sku":"${SKU}"}'
+      bindings: [{name: SKU, in: body, from: restock.$.sku}]
+  act_request: reserve
+setup_requests: [restock]
+session_ref: session.json
+invariant: {type: monotonic_limit, value: 1}
+success_when: {status: 200}
+reject_when: {status: 409}
+body_differential: {extract: "$.receipt_id"}
+reset_recipe: {kind: fresh_code, setup_ref: restock, how: "restock a fresh SKU with 1 unit before each trial"}

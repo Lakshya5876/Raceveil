@@ -1,0 +1,4 @@
+1f419890df3ccd2062962844e7710c13e960c8f49c33ff3acad0f70b32417208  .githooks/covenantwin.py
+1a1efbdc197eab4087bdae89ed1badf3535224ac33222e161647d39e3360ef42  .githooks/pre-commit
+a9b440de23b8ce2745e303fb7205a4afc41e8838b019e8672cdf63555e5e8787  .githooks/pre-push
+434c327c5c71d824ae686701a334b3ec878498bee3bb8d43989ced2b3bb2ea52  .claude/hooks/pre_bash_trust_root_guard.sh

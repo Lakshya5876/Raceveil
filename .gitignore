@@ -1,0 +1,26 @@
+.claude/session_state.json
+.claude/session_spend.tmp
+.claude/git_cache.json
+.claude/covenant_receipts.json
+.claude/covenant_state.json
+.claude/checkpoints/
+
+# Secrets / worktree-local config
+.env
+.env.*
+!.env.example
+.env.worktree
+
+# Go build artifacts
+/raceveil
+/raceveil.exe
+/bin/
+/dist/
+*.exe
+*.test
+coverage.out
+coverage.html
+
+# RaceVeil scan run directories (operator-local scan output, never source)
+/raceveil-run-*/
+/run-*/
