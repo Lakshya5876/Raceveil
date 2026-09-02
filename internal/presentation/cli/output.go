@@ -95,10 +95,10 @@ func printFinding(w io.Writer, f domain.Finding, o domain.OracleResult) {
 	_, _ = fmt.Fprintf(w, "%-8s%-51s[%s]\n", f.Severity.Label, label, f.Confidence)
 	_, _ = fmt.Fprintf(w, "%s\n\n", wiring.ActRequestLine(f.Workflow))
 
-	_, _ = fmt.Fprintf(w, "  Invariant     max_successes = %d   (%s)\n", f.Invariant.Value, f.Invariant.Source)
+	_, _ = fmt.Fprintf(w, "  Invariant     %s = %d   (%s)\n", f.Invariant.Type, f.Invariant.Value, f.Invariant.Source)
 	_, _ = fmt.Fprintf(w, "  Expected      %d successful effect(s)\n", f.Invariant.Value)
-	_, _ = fmt.Fprintf(w, "  Observed      %d successful effects   under N=%d concurrent   (proof cap = L+1 = %d reached)\n\n",
-		f.ObservedAtCreation.S, f.ConcurrencyN, f.RequiredProofEffects)
+	_, _ = fmt.Fprintf(w, "  Observed      %d successful effects   under N=%d concurrent   (minimum proof for %s: %d effect(s), reached)\n\n",
+		f.ObservedAtCreation.S, f.ConcurrencyN, f.Invariant.Type, f.RequiredProofEffects)
 
 	rep := f.ObservedAtCreation.Reproduction
 	_, _ = fmt.Fprintf(w, "  Reproduction  %d/%d fresh-state (%s) trials   Wilson95 lower bound %.3f\n",

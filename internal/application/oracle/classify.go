@@ -59,6 +59,79 @@ func ruleMatches(resp ObservedResponse, r Rule) bool {
 	return true
 }
 
+// limitMarkers are body substrings that indicate an enforced limit — the
+// rejection half of a classifier, and the evidence that an Invariant exists
+// at all (Design/ARCHITECTURE.md §2.4 Phase B, §4 baseline calibration).
+var limitMarkers = []string{
+	"already", "used", "redeemed", "duplicate", "exists", "taken",
+	"limit", "exceeded", "too many", "out of stock", "sold out",
+	"insufficient", "not pending", "conflict", "rate",
+}
+
+// preconditionMarkers are body substrings indicating a request failed
+// because a prerequisite was missing rather than because a limit was
+// enforced. Telling these apart is what stops "you have no cart" from being
+// mistaken for "this coupon is already used".
+var preconditionMarkers = []string{
+	"not found", "no such", "missing", "required", "empty",
+	"does not exist", "no cart", "no order", "no session",
+	"must be", "invalid", "unknown",
+}
+
+// IsLimitSignal reports whether a response looks like an enforced limit.
+func IsLimitSignal(status int, body string) bool {
+	if status == 409 || status == 429 {
+		return true
+	}
+	if status < 400 || status >= 500 {
+		return false
+	}
+	return containsAny(strings.ToLower(body), limitMarkers)
+}
+
+// IsPreconditionFailure reports whether a response looks like "you skipped
+// a step" rather than "the limit stopped you". A limit signal always wins:
+// "already redeemed" is a limit even though it is also a 4xx.
+func IsPreconditionFailure(status int, body string) bool {
+	if status < 400 || status >= 500 {
+		return false
+	}
+	lower := strings.ToLower(body)
+	if containsAny(lower, limitMarkers) {
+		return false
+	}
+	if status == 404 || status == 412 || status == 422 || status == 400 {
+		return true
+	}
+	return containsAny(lower, preconditionMarkers)
+}
+
+func containsAny(haystack string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(haystack, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassifyStructural is the Baseline's classifier of last resort: when the
+// operator declared no success_when/reject_when, the Oracle must still
+// learn one from what the Baseline observed (Design/ARCHITECTURE.md §4
+// "Baseline calibration (prerequisite for all levels)"). A 2xx is a
+// success, a limit-shaped 4xx is a rejection, and anything else stays
+// unclassified rather than being forced into a bucket.
+func ClassifyStructural(status int, body string) Classification {
+	switch {
+	case status >= 200 && status < 300:
+		return Success
+	case IsLimitSignal(status, body):
+		return Reject
+	default:
+		return Unclassified
+	}
+}
+
 // CountSuccesses is the Level 1 aggregate: S = #{concurrent responses
 // classified success} (Design/ARCHITECTURE.md §4).
 func CountSuccesses(responses []ObservedResponse, success, reject *Rule) int {

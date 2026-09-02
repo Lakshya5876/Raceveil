@@ -16,18 +16,19 @@ import (
 // concurrencyLadder if no violation appears after escalateAfter trials
 // (Design/ARCHITECTURE.md §5 concurrency-level sweep), and the loop stops
 // early once enough violations have been observed to already be evidence.
-func runTrials(ctx context.Context, cfg RunConfig, baseURL string) ([]domain.ConcurrentTrial, error) {
+func runTrials(ctx context.Context, cfg RunConfig, baseURL string, baseline domain.Baseline) ([]domain.ConcurrentTrial, error) {
 	actSpec, ok := cfg.Candidate.Workflow.RequestByID(cfg.Candidate.Workflow.ActRequest)
 	if !ok {
 		return nil, fmt.Errorf("act_request %q not found in workflow.requests", cfg.Candidate.Workflow.ActRequest)
 	}
+	success, reject := classifierFromBaseline(baseline)
 	tc := trialContext{
 		cfg:        cfg,
 		baseURL:    baseURL,
 		actSpec:    actSpec,
-		strategy:   sync.NewH1LastByte(cfg.Guard), // Phase 1 fixture speaks HTTP/1.1
-		success:    ruleFromMatcher(cfg.Candidate.SuccessWhen),
-		reject:     ruleFromMatcher(cfg.Candidate.RejectWhen),
+		strategy:   sync.NewH1LastByte(cfg.Guard),
+		success:    success,
+		reject:     reject,
 		stateIndep: stateIndependenceFor(cfg.Candidate),
 	}
 

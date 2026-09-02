@@ -28,7 +28,7 @@ func sampleFinding() domain.Finding {
 			ActRequest: "redeem",
 			Requests:   []domain.RequestSpec{{ID: "redeem", Method: "POST", URL: "/redeem"}},
 		},
-		Invariant:            domain.Invariant{Value: 1, Source: "declared"},
+		Invariant:            domain.Invariant{Type: domain.InvariantMaxSuccesses, Value: 1, Source: "declared"},
 		RequiredProofEffects: 2,
 		ConcurrencyN:         2,
 		StateIndependence:    domain.Independent,

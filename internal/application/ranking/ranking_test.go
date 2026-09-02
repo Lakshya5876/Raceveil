@@ -60,6 +60,29 @@ func TestStaticScore_ReusedIdentifierSignal(t *testing.T) {
 	}
 }
 
+// repeat builds a ProbeSender that returns the same observation for every
+// attempt — the shape of an endpoint with no limit.
+func repeat(r ProbeResult) ProbeSender {
+	return func(_ context.Context, _ domain.Workflow, attempts int) ([]ProbeResult, error) {
+		out := make([]ProbeResult, attempts)
+		for i := range out {
+			out[i] = r
+		}
+		return out, nil
+	}
+}
+
+// sequence builds a ProbeSender that replays a fixed observation sequence,
+// modelling one shared Setup followed by repeated Act executions.
+func sequence(results ...ProbeResult) ProbeSender {
+	return func(_ context.Context, _ domain.Workflow, attempts int) ([]ProbeResult, error) {
+		if attempts > len(results) {
+			attempts = len(results)
+		}
+		return results[:attempts], nil
+	}
+}
+
 func workflowFor(id, path string) domain.Workflow {
 	return domain.Workflow{
 		ID:         "wf_" + id,
@@ -72,9 +95,7 @@ func workflowFor(id, path string) domain.Workflow {
 // no Invariant can be established and the Candidate must be dropped
 // (Context/DECISIONS.md ADR-015).
 func TestProbeInvariant_NoLimitObserved_DropsCandidate(t *testing.T) {
-	send := func(context.Context, domain.Workflow) (ProbeResult, error) {
-		return ProbeResult{Status: 201, Body: `{"id":1}`}, nil
-	}
+	send := repeat(ProbeResult{Status: 201, Body: `{"id":1}`})
 	_, ok, err := ProbeInvariant(context.Background(), send, workflowFor("comment", "/comment"), 3)
 	if err != nil {
 		t.Fatalf("ProbeInvariant: %v", err)
@@ -85,14 +106,11 @@ func TestProbeInvariant_NoLimitObserved_DropsCandidate(t *testing.T) {
 }
 
 func TestProbeInvariant_LimitObserved_InfersInvariant(t *testing.T) {
-	call := 0
-	send := func(context.Context, domain.Workflow) (ProbeResult, error) {
-		call++
-		if call == 1 {
-			return ProbeResult{Status: 200, Body: `{"status":"redeemed"}`}, nil
-		}
-		return ProbeResult{Status: 409, Body: `already redeemed`}, nil
-	}
+	send := sequence(
+		ProbeResult{Status: 200, Body: `{"status":"redeemed"}`},
+		ProbeResult{Status: 409, Body: `already redeemed`},
+		ProbeResult{Status: 409, Body: `already redeemed`},
+	)
 	inv, ok, err := ProbeInvariant(context.Background(), send, workflowFor("redeem", "/coupon/redeem"), 3)
 	if err != nil {
 		t.Fatalf("ProbeInvariant: %v", err)
@@ -112,9 +130,7 @@ func TestProbeInvariant_LimitObserved_InfersInvariant(t *testing.T) {
 }
 
 func TestProbeInvariant_PreconditionFailure_DropsRatherThanInfers(t *testing.T) {
-	send := func(context.Context, domain.Workflow) (ProbeResult, error) {
-		return ProbeResult{Status: 404, Body: "no cart found"}, nil
-	}
+	send := repeat(ProbeResult{Status: 404, Body: "no cart found"})
 	_, ok, err := ProbeInvariant(context.Background(), send, workflowFor("apply", "/cart/coupon"), 3)
 	if err != nil {
 		t.Fatalf("ProbeInvariant: %v", err)
@@ -125,9 +141,7 @@ func TestProbeInvariant_PreconditionFailure_DropsRatherThanInfers(t *testing.T) 
 }
 
 func TestProbeInvariant_RejectedBeforeAnySuccess_DropsCandidate(t *testing.T) {
-	send := func(context.Context, domain.Workflow) (ProbeResult, error) {
-		return ProbeResult{Status: 409, Body: "already used"}, nil
-	}
+	send := repeat(ProbeResult{Status: 409, Body: "already used"})
 	_, ok, err := ProbeInvariant(context.Background(), send, workflowFor("redeem", "/coupon/redeem"), 3)
 	if err != nil {
 		t.Fatalf("ProbeInvariant: %v", err)
@@ -139,8 +153,8 @@ func TestProbeInvariant_RejectedBeforeAnySuccess_DropsCandidate(t *testing.T) {
 
 func TestProbeInvariant_PropagatesSendError(t *testing.T) {
 	wantErr := errors.New("dial refused")
-	send := func(context.Context, domain.Workflow) (ProbeResult, error) {
-		return ProbeResult{}, wantErr
+	send := func(context.Context, domain.Workflow, int) ([]ProbeResult, error) {
+		return nil, wantErr
 	}
 	if _, _, err := ProbeInvariant(context.Background(), send, workflowFor("x", "/x"), 2); !errors.Is(err, wantErr) {
 		t.Fatalf("expected the send error to propagate, got %v", err)

@@ -51,5 +51,7 @@ func ReplayOnce(ctx context.Context, cfg RunConfig, n int) (domain.ConcurrentTri
 		reject:     ruleFromMatcher(cfg.Candidate.RejectWhen),
 		stateIndep: stateIndependenceFor(cfg.Candidate),
 	}
+	// A .rv records the classifier the original run calibrated, so a replay
+	// judges responses by exactly the same standard (Design/DATA_MODEL.md §9).
 	return tc.runOne(ctx, 1, n)
 }

@@ -128,3 +128,91 @@ func TestAttachSetup_NoPlaceholderMeansNoBinding(t *testing.T) {
 		t.Error("setup should still be attached even without a data binding")
 	}
 }
+
+// An API that exposes parallel variants of one resource must never have an
+// Act Request paired with the *other* variant's setup: that mints state the
+// Act Request cannot use, and the endpoint then looks — wrongly — like it
+// has no invariant. Found against the real corpus, where /coupon/redeem-safe
+// was being fed a code minted by the vulnerable /coupon/issue.
+func TestFindSetupCandidates_RespectsResourceVariants(t *testing.T) {
+	all := []domain.CapturedRequest{
+		captured("issue", "POST", "/coupon/issue", ""),
+		captured("issue_safe", "POST", "/coupon/issue-safe", ""),
+		captured("redeem", "POST", "/coupon/redeem", `{"code":"x"}`),
+		captured("redeem_safe", "POST", "/coupon/redeem-safe", `{"code":"x"}`),
+	}
+
+	safe := FindSetupCandidates(all[3], all)
+	if len(safe) == 0 || safe[0].ID != "issue_safe" {
+		t.Errorf("the safe Act Request must use the safe setup, got %+v", safe)
+	}
+	for _, c := range safe {
+		if c.ID == "issue" {
+			t.Error("a safe Act Request must never be paired with the vulnerable variant's setup")
+		}
+	}
+
+	vuln := FindSetupCandidates(all[2], all)
+	if len(vuln) == 0 || vuln[0].ID != "issue" {
+		t.Errorf("the base Act Request must use the base setup, got %+v", vuln)
+	}
+	for _, c := range vuln {
+		if c.ID == "issue_safe" {
+			t.Error("the base Act Request must never be paired with a -safe variant setup")
+		}
+	}
+}
+
+// A hyphen is only a variant marker when the API actually uses it as one:
+// /issue-code is a name, not a "code variant", because no /issue exists
+// beside it.
+func TestVariantMarkers_OnlyCountsRealVariants(t *testing.T) {
+	realVariants := variantMarkers([]domain.CapturedRequest{
+		captured("a", "POST", "/coupon/redeem", ""),
+		captured("b", "POST", "/coupon/redeem-safe", ""),
+	})
+	if !realVariants["safe"] {
+		t.Error(`"safe" should be recognised as a variant marker when both /redeem and /redeem-safe exist`)
+	}
+
+	notVariants := variantMarkers([]domain.CapturedRequest{
+		captured("a", "POST", "/issue-code", ""),
+		captured("b", "POST", "/redeem", ""),
+	})
+	if notVariants["code"] {
+		t.Error(`"code" must not be treated as a variant marker: no /issue exists beside /issue-code`)
+	}
+}
+
+// Variants belong to one resource. Comparing bare last segments would let
+// /signup/issue-username pair off against an unrelated /coupon/issue and
+// invent a "username" variant, which then filtered away the real setup and
+// silently lost a finding. Found against the live corpus.
+func TestVariantMarkers_AreScopedToTheSameResource(t *testing.T) {
+	markers := variantMarkers([]domain.CapturedRequest{
+		captured("a", "POST", "/coupon/issue", ""),
+		captured("b", "POST", "/coupon/issue-safe", ""),
+		captured("c", "POST", "/signup/issue-username", ""),
+		captured("d", "POST", "/signup", ""),
+		captured("e", "POST", "/signup-safe", ""),
+	})
+	if !markers["safe"] {
+		t.Error(`"safe" is a real variant marker here (/coupon/issue and /coupon/issue-safe both exist)`)
+	}
+	if markers["username"] {
+		t.Error(`"username" must not be a variant marker: there is no /signup/issue beside /signup/issue-username`)
+	}
+}
+
+func TestFindSetupCandidates_KeepsSetupWithUnrelatedHyphenatedName(t *testing.T) {
+	all := []domain.CapturedRequest{
+		captured("issue_username", "POST", "/signup/issue-username", ""),
+		captured("signup", "POST", "/signup", `{"username":"x"}`),
+		captured("signup_safe", "POST", "/signup-safe", `{"username":"x"}`),
+		captured("coupon_issue", "POST", "/coupon/issue", ""),
+	}
+	got := FindSetupCandidates(all[1], all)
+	if len(got) == 0 || got[0].ID != "issue_username" {
+		t.Errorf("expected /signup/issue-username to remain the setup for /signup, got %+v", got)
+	}
+}

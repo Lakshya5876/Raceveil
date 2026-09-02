@@ -13,7 +13,7 @@ import (
 // ConcurrencyN and the Workflow reflect the minimized reproducer, not the
 // starting N/request set (Design/ARCHITECTURE.md §6: minimization exists so
 // the .rv hands a human the smallest useful reproduction).
-func buildFinding(cfg RunConfig, result domain.OracleResult, trials []domain.ConcurrentTrial, m domain.Minimization) domain.Finding {
+func buildFinding(cfg RunConfig, baseline domain.Baseline, result domain.OracleResult, trials []domain.ConcurrentTrial, m domain.Minimization) domain.Finding {
 	_, maxS, syncStrategy := summarizeTrialsForFinding(trials)
 
 	workflow := cfg.Candidate.Workflow
@@ -33,8 +33,8 @@ func buildFinding(cfg RunConfig, result domain.OracleResult, trials []domain.Con
 		Oracle: domain.FindingOracleSummary{
 			PrimaryLevels:       result.PrimaryOracleLevels,
 			CorroboratingLevels: corroboratingLevels(result.CorroboratingObservables),
-			SuccessSignature:    matcherOrInferred(cfg.Candidate.SuccessWhen, nil),
-			RejectSignature:     matcherOrInferred(cfg.Candidate.RejectWhen, nil),
+			SuccessSignature:    baseline.SuccessSignature,
+			RejectSignature:     baseline.RejectSignature,
 			PostStateProbe:      cfg.Candidate.PostStateProbe,
 		},
 		Expected:          domain.ExpectedInvariant{MaxSuccesses: cfg.Candidate.Invariant.Value},

@@ -8,34 +8,53 @@ import (
 	"github.com/Lakshya5876/Raceveil/internal/domain"
 )
 
-// ProbeWorkflow executes one Workflow sequentially — Setup phase once, then
-// the Act Request once — and returns the Act Request's response. This is
-// the cheap traffic behind ranking's Phase B invariant probe
-// (Design/ARCHITECTURE.md §2.4): a handful of sequential executions used to
-// decide whether a limit exists at all, before any concurrent burst is
-// considered.
+// ProbeObservation is one sequential Act-Request execution during Phase B.
+type ProbeObservation struct {
+	Status int
+	Body   string
+}
+
+// ProbeWorkflow runs the cheap sequential probe behind ranking's Phase B
+// invariant gate (Design/ARCHITECTURE.md §2.4): the Setup phase runs
+// **once**, then the Act Request runs `attempts` times against that one
+// shared state.
 //
-// It is deliberately sequential and single-shot: nothing here races, so it
-// can never itself cause the violation it is looking for.
-func ProbeWorkflow(ctx context.Context, cfg RunConfig, wf domain.Workflow) (int, string, error) {
+// Running setup once is the whole point. Re-running it per attempt would
+// mint fresh state every time — a new coupon, a new cart — so the limit
+// could never be observed and every endpoint would look unlimited. This
+// mirrors the Baseline's structure (Design/DOMAIN.md §Baseline) and the Act
+// Request definition (setup once, act replicated), just sequentially
+// instead of concurrently. Nothing here races, so the probe can never
+// itself cause the violation it is looking for.
+func ProbeWorkflow(ctx context.Context, cfg RunConfig, wf domain.Workflow, attempts int) ([]ProbeObservation, error) {
+	if attempts < 2 {
+		attempts = 2 // a limit cannot be observed without a second execution
+	}
 	baseURL := strings.TrimSuffix(cfg.Scope.Target, "/")
 
 	probeCfg := cfg
 	probeCfg.Candidate.Workflow = wf
 
-	prior, err := runSetup(ctx, probeCfg, baseURL)
-	if err != nil {
-		return 0, "", fmt.Errorf("probe setup: %w", err)
-	}
 	actSpec, ok := wf.RequestByID(wf.ActRequest)
 	if !ok {
-		return 0, "", fmt.Errorf("probe: act_request %q not found in workflow.requests", wf.ActRequest)
+		return nil, fmt.Errorf("probe: act_request %q not found in workflow.requests", wf.ActRequest)
 	}
-	resp, err := sendSpec(ctx, probeCfg, actSpec, baseURL, prior)
+	prior, err := runSetup(ctx, probeCfg, baseURL)
 	if err != nil {
-		return 0, "", fmt.Errorf("probe act: %w", err)
+		return nil, fmt.Errorf("probe setup: %w", err)
 	}
-	return resp.StatusCode, string(resp.Body), nil
+
+	observations := make([]ProbeObservation, 0, attempts)
+	for i := 0; i < attempts; i++ {
+		resp, err := sendSpec(ctx, probeCfg, actSpec, baseURL, prior)
+		if err != nil {
+			return observations, fmt.Errorf("probe act %d: %w", i+1, err)
+		}
+		observations = append(observations, ProbeObservation{
+			Status: resp.StatusCode, Body: string(resp.Body),
+		})
+	}
+	return observations, nil
 }
 
 // ProbeEndpoint issues one read-only GET through the Guard — used by
@@ -68,3 +87,16 @@ func (discardStore) PersistOracle(string, domain.OracleResult) error       { ret
 func (discardStore) PersistMinimization(string, domain.Minimization) error { return nil }
 func (discardStore) PersistFinding(domain.Finding) error                   { return nil }
 func (discardStore) PersistAudit(domain.AuditEntry) error                  { return nil }
+
+// SendOneRequest sends a single prepared RequestSpec through the Guard and
+// returns its status and body. Discovery uses it to learn what a Setup
+// request actually returns, so the Act Request's binding is inferred from
+// observed evidence rather than guessed from an endpoint name.
+func SendOneRequest(ctx context.Context, cfg RunConfig, spec domain.RequestSpec) (int, []byte, error) {
+	baseURL := strings.TrimSuffix(cfg.Scope.Target, "/")
+	resp, err := sendSpec(ctx, cfg, spec, baseURL, priorResponses{})
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, resp.Body, nil
+}

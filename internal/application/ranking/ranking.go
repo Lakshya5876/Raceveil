@@ -124,16 +124,19 @@ type ProbeResult struct {
 	Body   string
 }
 
-// ProbeSender executes one Workflow instance sequentially and reports what
-// came back. Wiring supplies an implementation that runs the Setup phase
-// then the Act Request through the Scope Guard; tests supply a fake.
-type ProbeSender func(ctx context.Context, wf domain.Workflow) (ProbeResult, error)
+// ProbeSender runs the Workflow's Act Request `attempts` times over one
+// shared Setup phase, sequentially, and reports what each execution
+// returned. Running Setup once is essential: re-running it per attempt
+// would mint fresh state every time, so no limit could ever be observed.
+// Wiring supplies an implementation that goes through the Scope Guard;
+// tests supply a fake.
+type ProbeSender func(ctx context.Context, wf domain.Workflow, attempts int) ([]ProbeResult, error)
 
-// ProbeInvariant is Phase B: run the Workflow sequentially up to `attempts`
-// times on the same state and look for a rejection. A rejection after at
-// least one success means a limit exists, so an Invariant can be inferred;
-// no rejection means no established Invariant, and the Candidate must be
-// dropped rather than tested (ADR-015).
+// ProbeInvariant is Phase B: probe the Workflow sequentially against one
+// piece of state and look for a rejection. A rejection after at least one
+// success means a limit exists, so an Invariant can be inferred; no
+// rejection means no established Invariant, and the Candidate must be
+// dropped rather than tested (Context/DECISIONS.md ADR-015).
 //
 // The returned bool is the gate: false means "no Invariant, drop this
 // Workflow", and is the normal, correct outcome for a legitimately
@@ -142,20 +145,21 @@ func ProbeInvariant(ctx context.Context, send ProbeSender, wf domain.Workflow, a
 	if attempts < 2 {
 		attempts = 2 // a limit cannot be observed without at least a second execution
 	}
+	results, err := send(ctx, wf, attempts)
+	if err != nil {
+		return domain.Invariant{}, false, fmt.Errorf("ranking: probe: %w", err)
+	}
+
 	successes := 0
-	for i := 0; i < attempts; i++ {
-		res, err := send(ctx, wf)
-		if err != nil {
-			return domain.Invariant{}, false, fmt.Errorf("ranking: probe execution %d: %w", i+1, err)
-		}
+	for _, res := range results {
 		switch {
 		case res.Status >= 200 && res.Status < 300:
 			successes++
 		case discovery.IsLimitSignal(res.Status, res.Body):
 			if successes == 0 {
 				// Rejected before ever succeeding: the probe never established
-				// the endpoint works at all, so there is no calibrated limit —
-				// not an Invariant, just an unusable candidate.
+				// that the endpoint works at all, so there is no calibrated
+				// limit — not an Invariant, just an unusable candidate.
 				return domain.Invariant{}, false, nil
 			}
 			return domain.Invariant{

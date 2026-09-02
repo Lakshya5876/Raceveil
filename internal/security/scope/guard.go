@@ -161,15 +161,44 @@ func (g *Guard) checkDestructiveRules(method, path string) error {
 	return nil
 }
 
+// checkAndRecordCaps enforces the Scope's per-run budgets
+// (Design/SECURITY.md §8) and distinguishes the two kinds:
+//
+//   - max_requests_total and max_wallclock_sec are *budgets*. Once spent
+//     they never come back, so exceeding one is terminal and refuses.
+//   - max_rate_per_sec is a *throttle*. Its window clears every second, so
+//     the correct response to hitting it is to wait for the next window,
+//     not to abort a scan mid-experiment. Throttling is the whole point of
+//     a rate cap: it shapes load, it does not cancel work.
+//
+// waitFor is returned rather than slept on here so the caller can wait
+// without holding the mutex.
 func (g *Guard) checkAndRecordCaps() error {
+	for {
+		waitFor, err := g.reserveSlot()
+		if err != nil {
+			return err
+		}
+		if waitFor <= 0 {
+			return nil
+		}
+		time.Sleep(waitFor)
+	}
+}
+
+// reserveSlot accounts for one request against the caps. It returns a
+// non-zero duration when the caller must wait for the rate window to roll
+// over before the request may be sent.
+func (g *Guard) reserveSlot() (time.Duration, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
 	now := time.Now()
 	if g.scope.Caps.MaxWallclockSec > 0 && now.Sub(g.started) > time.Duration(g.scope.Caps.MaxWallclockSec)*time.Second {
-		return fmt.Errorf("%w: wallclock budget of %ds exceeded", ErrOutOfScope, g.scope.Caps.MaxWallclockSec)
+		return 0, fmt.Errorf("%w: wallclock budget of %ds exceeded", ErrOutOfScope, g.scope.Caps.MaxWallclockSec)
 	}
 	if g.scope.Caps.MaxRequestsTotal > 0 && g.requestsSent >= g.scope.Caps.MaxRequestsTotal {
-		return fmt.Errorf("%w: total request budget of %d exhausted", ErrOutOfScope, g.scope.Caps.MaxRequestsTotal)
+		return 0, fmt.Errorf("%w: total request budget of %d exhausted", ErrOutOfScope, g.scope.Caps.MaxRequestsTotal)
 	}
 	if g.scope.Caps.MaxRatePerSec > 0 {
 		if now.Sub(g.windowStart) >= time.Second {
@@ -177,12 +206,12 @@ func (g *Guard) checkAndRecordCaps() error {
 			g.windowCount = 0
 		}
 		if g.windowCount >= g.scope.Caps.MaxRatePerSec {
-			return fmt.Errorf("%w: rate cap of %d/s exceeded", ErrOutOfScope, g.scope.Caps.MaxRatePerSec)
+			return time.Second - now.Sub(g.windowStart), nil
 		}
 		g.windowCount++
 	}
 	g.requestsSent++
-	return nil
+	return 0, nil
 }
 
 // AcquireSlot blocks until a concurrency slot is available under the

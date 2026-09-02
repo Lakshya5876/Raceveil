@@ -301,9 +301,13 @@ func establishCandidate(
 			userInv.PostStateProbe, userInv.BodyDiff, hasSetup(r.Workflow)), true, nil
 	}
 
-	send := func(ctx context.Context, wf domain.Workflow) (ranking.ProbeResult, error) {
-		status, body, err := scheduler.ProbeWorkflow(ctx, base, wf)
-		return ranking.ProbeResult{Status: status, Body: body}, err
+	send := func(ctx context.Context, wf domain.Workflow, attempts int) ([]ranking.ProbeResult, error) {
+		observations, err := scheduler.ProbeWorkflow(ctx, base, wf, attempts)
+		results := make([]ranking.ProbeResult, 0, len(observations))
+		for _, o := range observations {
+			results = append(results, ranking.ProbeResult{Status: o.Status, Body: o.Body})
+		}
+		return results, err
 	}
 
 	wf := r.Workflow
@@ -318,7 +322,7 @@ func establishCandidate(
 		// (Design/ARCHITECTURE.md §2.4: Phase B is "cheap traffic").
 		actCaptured := capturedByID(captured, r.Workflow.ActRequest)
 		if setups := discovery.FindSetupCandidates(actCaptured, captured); len(setups) > 0 {
-			withSetup := discovery.AttachSetup(wf, setups[0], guessBindField(setups[0]))
+			withSetup := buildWorkflowWithSetup(ctx, base, wf, setups[0])
 			inv, established, err = ranking.ProbeInvariant(ctx, send, withSetup, attempts)
 			if err != nil {
 				return domain.Candidate{}, false, err
@@ -333,6 +337,25 @@ func establishCandidate(
 	}
 
 	return candidateFrom(r, wf, inv, nil, nil, nil, nil, hasSetup(wf)), true, nil
+}
+
+// buildWorkflowWithSetup attaches a Setup phase to a Workflow and, when the
+// Act Request's body shape is still unknown (the normal case for an
+// endpoint scraped from inline JavaScript), learns it: run the setup once,
+// look at what it actually returned, and bind that field into the Act
+// Request. Inference from observed evidence, not from an endpoint name.
+func buildWorkflowWithSetup(ctx context.Context, base scheduler.RunConfig, wf domain.Workflow, setup domain.CapturedRequest) domain.Workflow {
+	withSetup := discovery.AttachSetup(wf, setup, guessBindField(setup))
+
+	setupSpec, ok := withSetup.RequestByID(setup.ID)
+	if !ok {
+		return withSetup
+	}
+	status, body, err := scheduler.SendOneRequest(ctx, base, setupSpec)
+	if err != nil || status < 200 || status >= 300 {
+		return withSetup // the setup is not usable; the probe will say so
+	}
+	return discovery.SynthesizeActBinding(withSetup, setup.ID, body)
 }
 
 // candidateFrom normalizes a discovered Workflow + Invariant into the same
@@ -352,7 +375,7 @@ func candidateFrom(
 	signals.LimitObservedInProbe = inv.Source == "inferred"
 
 	c := domain.Candidate{
-		ID:               "cand_" + wf.ActRequest,
+		ID:               candidateID(wf),
 		Source:           "inferred",
 		Score:            &score,
 		Workflow:         wf,
@@ -379,6 +402,34 @@ func candidateFrom(
 }
 
 func hasSetup(wf domain.Workflow) bool { return len(wf.SetupRequests) > 0 }
+
+// candidateID names a discovered Candidate after the endpoint it tests, so
+// a run directory and a .rv filename read like the finding they describe
+// ("cand_post_coupon_redeem") rather than like a crawl artifact
+// ("cand_js_7f674c57").
+func candidateID(wf domain.Workflow) string {
+	spec, ok := wf.RequestByID(wf.ActRequest)
+	if !ok {
+		return "cand_" + wf.ActRequest
+	}
+	slug := strings.ToLower(spec.Method + spec.URL)
+	var b strings.Builder
+	b.WriteString("cand")
+	lastUnderscore := true
+	for _, r := range slug {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			if lastUnderscore {
+				b.WriteByte('_')
+				lastUnderscore = false
+			}
+			b.WriteRune(r)
+		default:
+			lastUnderscore = true
+		}
+	}
+	return b.String()
+}
 
 func capturedByID(captured []domain.CapturedRequest, id string) domain.CapturedRequest {
 	for _, c := range captured {

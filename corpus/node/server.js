@@ -32,6 +32,47 @@ const randomId = () => crypto.randomBytes(8).toString('hex');
 // vulnerable (the two queries are still unlocked and separately visible).
 const RACE_WINDOW_MS = 8;
 
+// An index page, so `raceveil scan <url>` has something to crawl the way it
+// would crawl a real app: links to pages, plus the XHR endpoints referenced
+// from inline JavaScript. Nothing here is special-cased for RaceVeil — it is
+// the ordinary surface a browser would see.
+app.get('/', (_req, res) => {
+  res.type('html').send(`<!doctype html><html><body>
+    <h1>RaceVeil corpus (Node/Express + PostgreSQL)</h1>
+    <a href="/coupons">coupons</a>
+    <a href="/inventory">inventory</a>
+    <script>
+      fetch("/coupon/issue", {method:"POST"});
+      fetch("/coupon/redeem", {method:"POST"});
+      fetch("/giftcard/issue", {method:"POST"});
+      fetch("/giftcard/redeem", {method:"POST"});
+      fetch("/inventory/restock", {method:"POST"});
+      fetch("/inventory/reserve", {method:"POST"});
+      fetch("/order/create", {method:"POST"});
+      fetch("/order/confirm", {method:"POST"});
+      fetch("/signup/issue-username", {method:"POST"});
+      fetch("/signup", {method:"POST"});
+      fetch("/health", {method:"GET"});
+      // The synchronized-safe twins are on the same page, so one discovery
+      // scan has to find the vulnerable endpoints AND stay clean on their
+      // correctly-locked counterparts (Design/TEST_PLAN.md Layer 6).
+      fetch("/coupon/issue-safe", {method:"POST"});
+      fetch("/coupon/redeem-safe", {method:"POST"});
+      fetch("/giftcard/issue-safe", {method:"POST"});
+      fetch("/giftcard/redeem-safe", {method:"POST"});
+      fetch("/inventory/restock-safe", {method:"POST"});
+      fetch("/inventory/reserve-safe", {method:"POST"});
+      fetch("/order/create-safe", {method:"POST"});
+      fetch("/order/confirm-safe", {method:"POST"});
+      fetch("/signup-safe", {method:"POST"});
+    </script>
+  </body></html>`);
+});
+
+app.get('/coupons', (_req, res) => res.type('html').send('<html><body>coupons</body></html>'));
+app.get('/inventory', (_req, res) => res.type('html').send('<html><body>inventory</body></html>'));
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
 // ---------------------------------------------------------------------
 // Archetype 1 (max_successes): check-then-act coupon redemption.
 // ---------------------------------------------------------------------

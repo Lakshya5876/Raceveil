@@ -134,19 +134,28 @@ func TestCheck_RejectsOverTotalRequestCap(t *testing.T) {
 	}
 }
 
-func TestCheck_RejectsOverRateCap(t *testing.T) {
+// A rate cap is a throttle, not a kill switch: its window clears every
+// second, so exceeding it must delay the request rather than abort the
+// scan. (Total-request and wallclock budgets never come back, so those
+// stay terminal — covered by their own tests.)
+func TestCheck_RateCapThrottlesRatherThanFailing(t *testing.T) {
 	s := fixtureScope()
-	s.Caps.MaxRatePerSec = 1
+	s.Caps.MaxRatePerSec = 2
 	s.Caps.MaxRequestsTotal = 0
 	g, err := NewGuard(s)
 	if err != nil {
 		t.Fatalf("NewGuard: %v", err)
 	}
-	if err := g.Check("POST", "http://127.0.0.1:18743/issue-code"); err != nil {
-		t.Fatalf("expected first request to be allowed, got %v", err)
+
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		if err := g.Check("POST", "http://127.0.0.1:18743/issue-code"); err != nil {
+			t.Fatalf("request %d must be throttled, not refused, got %v", i, err)
+		}
 	}
-	if err := g.Check("POST", "http://127.0.0.1:18743/issue-code"); !errors.Is(err, ErrOutOfScope) {
-		t.Fatalf("expected ErrOutOfScope for exceeding rate cap within the same window, got %v", err)
+	elapsed := time.Since(start)
+	if elapsed < 500*time.Millisecond {
+		t.Errorf("the third request should have waited for the next rate window, took only %v", elapsed)
 	}
 }
 

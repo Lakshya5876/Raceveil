@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Lakshya5876/Raceveil/internal/application/oracle"
 	"github.com/Lakshya5876/Raceveil/internal/domain"
 )
 
@@ -30,63 +31,17 @@ var setupVerbs = []string{
 	"open", "begin", "prepare", "generate", "restock", "seed",
 }
 
-// preconditionMarkers are body substrings that suggest a request failed
-// because a prerequisite was missing rather than because a limit was
-// enforced. Distinguishing the two is what stops discovery from mistaking
-// "you have no cart" for "this coupon is already used".
-var preconditionMarkers = []string{
-	"not found", "no such", "missing", "required", "empty",
-	"does not exist", "no cart", "no order", "no session",
-	"must be", "invalid", "unknown",
-}
-
-// limitMarkers are body substrings that suggest a limit was enforced —
-// the signal an Invariant actually exists (Design/ARCHITECTURE.md §2.4
-// Phase B).
-var limitMarkers = []string{
-	"already", "used", "redeemed", "duplicate", "exists", "taken",
-	"limit", "exceeded", "too many", "out of stock", "sold out",
-	"insufficient", "not pending", "conflict", "rate",
-}
-
 // IsPreconditionFailure reports whether a response looks like "you skipped
-// a step" rather than "the limit stopped you".
+// a step" rather than "the limit stopped you". Response meaning is the
+// Oracle's vocabulary (Level 1 classification); discovery just applies it.
 func IsPreconditionFailure(status int, body string) bool {
-	if status < 400 || status >= 500 {
-		return false
-	}
-	lower := strings.ToLower(body)
-	// A limit signal wins: "already redeemed" is a limit, not a missing
-	// precondition, even though both are 4xx.
-	if containsAny(lower, limitMarkers) {
-		return false
-	}
-	if status == 404 || status == 412 || status == 422 || status == 400 {
-		return true
-	}
-	return containsAny(lower, preconditionMarkers)
+	return oracle.IsPreconditionFailure(status, body)
 }
 
 // IsLimitSignal reports whether a response looks like an enforced limit —
-// the rejection half of a Baseline classifier, and the evidence that an
-// Invariant exists at all.
+// the evidence that an Invariant exists at all.
 func IsLimitSignal(status int, body string) bool {
-	if status == 409 || status == 429 {
-		return true
-	}
-	if status < 400 || status >= 500 {
-		return false
-	}
-	return containsAny(strings.ToLower(body), limitMarkers)
-}
-
-func containsAny(haystack string, needles []string) bool {
-	for _, n := range needles {
-		if strings.Contains(haystack, n) {
-			return true
-		}
-	}
-	return false
+	return oracle.IsLimitSignal(status, body)
 }
 
 // idPattern matches identifier-shaped tokens in a path or body — hex ids,
@@ -133,9 +88,17 @@ func FindSetupCandidates(act domain.CapturedRequest, all []domain.CapturedReques
 		req   domain.CapturedRequest
 		score int
 	}
+	markers := variantMarkers(all)
+	actVariant := variantOf(act.Endpoint.Path, markers)
+
 	var candidates []scored
 	for _, r := range all {
 		if r.ID == act.ID || !IsMutating(r.Endpoint.Method) {
+			continue
+		}
+		// A setup from a different variant of the same resource mints state
+		// this Act Request cannot use, so it is not a candidate at all.
+		if variantOf(r.Endpoint.Path, markers) != actVariant {
 			continue
 		}
 		if score := setupScore(act, r); score > 0 {
@@ -161,18 +124,93 @@ func FindSetupCandidates(act domain.CapturedRequest, all []domain.CapturedReques
 
 // setupScore rates how plausibly candidate establishes the precondition act
 // needs. Higher is better; 0 means "not a plausible setup".
+//
+// A creation-shaped verb in the candidate's own path is a *necessary*
+// condition, not just a bonus: without it, "shares a path prefix" would
+// happily nominate /coupon/redeem as the setup for /coupon/issue, which is
+// backwards and burns a probe proving it. An Act Request that already mints
+// its own state likewise needs no setup at all.
 func setupScore(act, candidate domain.CapturedRequest) int {
-	score := 0
-	if prefix := pathPrefix(act.Endpoint.Path); prefix != "" && pathPrefix(candidate.Endpoint.Path) == prefix {
-		score += 3 // sibling under the same resource, e.g. /coupon/issue for /coupon/redeem
+	if !hasSetupVerb(candidate.Endpoint.Path) {
+		return 0
 	}
-	if hasSetupVerb(candidate.Endpoint.Path) {
-		score += 2
+	if hasSetupVerb(act.Endpoint.Path) {
+		return 0 // the Act Request creates its own precondition
 	}
+	score := 2
+	// Shared leading path segments: /coupon/issue is a far better setup for
+	// /coupon/redeem than /newsletter/create is.
+	score += 3 * sharedSegments(act.Endpoint.Path, candidate.Endpoint.Path)
 	if actConsumesIdentifier(act) {
 		score++ // the Act Request looks like it consumes an id something else mints
 	}
 	return score
+}
+
+// sharedSegments counts the leading path segments two paths have in common.
+func sharedSegments(a, b string) int {
+	as := strings.Split(strings.Trim(a, "/"), "/")
+	bs := strings.Split(strings.Trim(b, "/"), "/")
+	n := 0
+	for n < len(as) && n < len(bs) && as[n] == bs[n] && as[n] != "" {
+		n++
+	}
+	return n
+}
+
+// variantMarkers finds the trailing "-token" markers that this particular
+// API actually uses to expose parallel variants of one resource — "-safe"
+// where both /coupon/redeem and /coupon/redeem-safe exist, "-v2" where both
+// /orders and /orders-v2 do.
+//
+// A marker is only real if the same stem appears both with and without it
+// somewhere in the captured set. That corpus-relative test is what stops
+// /issue-code from being misread as a "code variant" of /issue: nothing
+// named /issue exists alongside it, so "-code" is just part of the name.
+//
+// This matters because pairing an Act Request with the *other* variant's
+// setup mints state the Act Request cannot use, which then looks — wrongly
+// — like "this endpoint has no invariant".
+func variantMarkers(all []domain.CapturedRequest) map[string]bool {
+	// Full paths, not bare last segments: variants are variants *of the same
+	// resource*. Comparing last segments alone would let /signup/issue-username
+	// pair off against an unrelated /coupon/issue and invent a "username"
+	// variant that this API does not have.
+	paths := make(map[string]bool, len(all))
+	for _, r := range all {
+		paths[strings.TrimRight(r.Endpoint.Path, "/")] = true
+	}
+	markers := map[string]bool{}
+	for path := range paths {
+		seg := lastSegment(path)
+		i := strings.LastIndex(seg, "-")
+		if i <= 0 {
+			continue
+		}
+		stem := strings.TrimSuffix(path, "-"+seg[i+1:])
+		if paths[stem] {
+			markers[seg[i+1:]] = true
+		}
+	}
+	return markers
+}
+
+// variantOf returns the variant marker a path carries, given the markers
+// this API actually uses, or "" for the base variant.
+func variantOf(path string, markers map[string]bool) string {
+	seg := lastSegment(path)
+	if i := strings.LastIndex(seg, "-"); i > 0 && markers[seg[i+1:]] {
+		return seg[i+1:]
+	}
+	return ""
+}
+
+func lastSegment(path string) string {
+	trimmed := strings.Trim(path, "/")
+	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
+		return trimmed[i+1:]
+	}
+	return trimmed
 }
 
 func actConsumesIdentifier(act domain.CapturedRequest) bool {
@@ -230,17 +268,4 @@ func hasSetupVerb(path string) bool {
 		}
 	}
 	return false
-}
-
-// pathPrefix returns the first path segment, the crude "resource" a request
-// belongs to (/coupon/redeem and /coupon/issue share "coupon").
-func pathPrefix(path string) string {
-	trimmed := strings.Trim(path, "/")
-	if trimmed == "" {
-		return ""
-	}
-	if i := strings.Index(trimmed, "/"); i >= 0 {
-		return trimmed[:i]
-	}
-	return trimmed
 }

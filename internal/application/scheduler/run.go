@@ -90,7 +90,7 @@ func Run(ctx context.Context, cfg RunConfig) (Outcome, error) {
 		return Outcome{}, fmt.Errorf("persist baseline: %w", err)
 	}
 
-	trials, err := runTrials(ctx, cfg, baseURL)
+	trials, err := runTrials(ctx, cfg, baseURL, baseline)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("trials: %w", err)
 	}
@@ -107,7 +107,7 @@ func Run(ctx context.Context, cfg RunConfig) (Outcome, error) {
 		return outcome, nil
 	}
 
-	finding, err := finalizeFinding(ctx, cfg, baseURL, result, trials)
+	finding, err := finalizeFinding(ctx, cfg, baseURL, baseline, result, trials)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -129,15 +129,15 @@ func evaluateExperiment(cfg RunConfig, required int, baseline domain.Baseline, t
 
 // finalizeFinding runs minimization and packages the Finding — split out of
 // Run so the top-level pipeline stays a flat, readable sequence.
-func finalizeFinding(ctx context.Context, cfg RunConfig, baseURL string, result domain.OracleResult, trials []domain.ConcurrentTrial) (domain.Finding, error) {
-	minimization, err := minimizeExperiment(ctx, cfg, baseURL, trials)
+func finalizeFinding(ctx context.Context, cfg RunConfig, baseURL string, baseline domain.Baseline, result domain.OracleResult, trials []domain.ConcurrentTrial) (domain.Finding, error) {
+	minimization, err := minimizeExperiment(ctx, cfg, baseURL, baseline, trials)
 	if err != nil {
 		return domain.Finding{}, fmt.Errorf("minimize: %w", err)
 	}
 	if err := cfg.Store.PersistMinimization(cfg.Candidate.ID, minimization); err != nil {
 		return domain.Finding{}, fmt.Errorf("persist minimization: %w", err)
 	}
-	finding := buildFinding(cfg, result, trials, minimization)
+	finding := buildFinding(cfg, baseline, result, trials, minimization)
 	if err := cfg.Store.PersistFinding(finding); err != nil {
 		return domain.Finding{}, fmt.Errorf("persist finding: %w", err)
 	}
@@ -148,7 +148,7 @@ func finalizeFinding(ctx context.Context, cfg RunConfig, baseURL string, result 
 // reproducible form: the decreasing concurrency sweep, then greedy Setup-
 // request dropping (Design/ARCHITECTURE.md §6). Only runs once a violation
 // is already established (Run calls it after Evaluate returns found=true).
-func minimizeExperiment(ctx context.Context, cfg RunConfig, baseURL string, trials []domain.ConcurrentTrial) (domain.Minimization, error) {
+func minimizeExperiment(ctx context.Context, cfg RunConfig, baseURL string, baseline domain.Baseline, trials []domain.ConcurrentTrial) (domain.Minimization, error) {
 	startN := 0
 	for _, t := range trials {
 		if t.N > startN {
@@ -159,11 +159,12 @@ func minimizeExperiment(ctx context.Context, cfg RunConfig, baseURL string, tria
 	if !ok {
 		return domain.Minimization{}, fmt.Errorf("act_request %q not found in workflow.requests", cfg.Candidate.Workflow.ActRequest)
 	}
+	success, reject := classifierFromBaseline(baseline)
 	tc := trialContext{
 		cfg: cfg, baseURL: baseURL, actSpec: actSpec,
 		strategy:   sync.NewH1LastByte(cfg.Guard),
-		success:    ruleFromMatcher(cfg.Candidate.SuccessWhen),
-		reject:     ruleFromMatcher(cfg.Candidate.RejectWhen),
+		success:    success,
+		reject:     reject,
 		stateIndep: stateIndependenceFor(cfg.Candidate),
 	}
 
@@ -181,8 +182,8 @@ func minimizeExperiment(ctx context.Context, cfg RunConfig, baseURL string, tria
 		rc := trialContext{
 			cfg: reduced, baseURL: baseURL, actSpec: actSpec,
 			strategy:   sync.NewH1LastByte(reduced.Guard),
-			success:    ruleFromMatcher(reduced.Candidate.SuccessWhen),
-			reject:     ruleFromMatcher(reduced.Candidate.RejectWhen),
+			success:    success,
+			reject:     reject,
 			stateIndep: stateIndependenceFor(reduced.Candidate),
 		}
 		trial, err := rc.runOne(ctx, 0, concurrency.MinimalN)
