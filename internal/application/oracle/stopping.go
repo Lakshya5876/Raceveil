@@ -7,8 +7,15 @@ import "github.com/Lakshya5876/Raceveil/internal/domain"
 // scheduler can ask "could any remaining trial still change the verdict?"
 // without duplicating the band rules.
 func BandFor(r, k int, classifierSeparation string, corroboration []string) domain.Confidence {
-	if k == 0 && r == 0 {
-		return "" // nothing observed yet
+	if r == 0 {
+		// Mirrors Evaluate's anyViolation gate: zero observed violations is
+		// not a (weak) Confidence band, it is no Finding at all. Without
+		// this, a hypothetical r=0 would fall through to classifyConfidence
+		// and come back "LIKELY" (kIndependent>0, rViolations<2), which
+		// would make BandCanStillChange think the verdict is already
+		// settled at "no violation yet" and stop the trial loop before a
+		// single violation has even been observed.
+		return ""
 	}
 	lo, _ := WilsonInterval(r, k, Z95)
 	return classifyConfidence(classifyInput{
