@@ -41,3 +41,38 @@ type Endpoint struct {
 	Method string `json:"method"`
 	Path   string `json:"path"`
 }
+
+// MethodDelete is the one HTTP verb RaceVeil treats as destructive and
+// blocks by default (Design/SECURITY.md §6).
+const MethodDelete = "DELETE"
+
+// mutatingMethods are the HTTP verbs that can produce a state-changing
+// effect. Which verbs can change state is domain vocabulary — it is the
+// same question as "can this Endpoint carry an integrity violation at all"
+// — so it lives here rather than in a discovery heuristic.
+var mutatingMethods = map[string]bool{
+	"POST": true, "PUT": true, "PATCH": true, MethodDelete: true,
+}
+
+// IsMutating reports whether a method can change server state. Only
+// mutating Endpoints can violate an integrity Invariant: a read-only
+// endpoint has no effect to duplicate.
+func IsMutating(method string) bool {
+	return mutatingMethods[upper(method)]
+}
+
+// IsDestructiveVerb reports whether a method is destructive enough to be
+// blocked by default (Design/SECURITY.md §6).
+func IsDestructiveVerb(method string) bool {
+	return upper(method) == MethodDelete
+}
+
+func upper(s string) string {
+	out := []byte(s)
+	for i, c := range out {
+		if c >= 'a' && c <= 'z' {
+			out[i] = c - ('a' - 'A')
+		}
+	}
+	return string(out)
+}

@@ -121,20 +121,42 @@ func (g *Guard) checkAllowlist(method string, u *url.URL) error {
 	if !ok {
 		return fmt.Errorf("%w: host %q not in scope allowlist", ErrOutOfScope, host)
 	}
-	if len(entry.ports) > 0 && !entry.ports[portOf(u)] {
-		return fmt.Errorf("%w: port %d not authorized for host %q", ErrOutOfScope, portOf(u), host)
+	// An empty path is semantically "/" (RFC 3986 §6.2.3), so
+	// "https://host" must be treated exactly like "https://host/" — that is
+	// the most natural way to name a target on the command line.
+	path := u.Path
+	if path == "" {
+		path = "/"
 	}
-	if !pathAllowed(u.Path, entry.rule.PathPrefixes) {
-		return fmt.Errorf("%w: path %q not under an authorized prefix for host %q", ErrOutOfScope, u.Path, host)
+	if err := g.checkHostReachable(entry, host, portOf(u), path); err != nil {
+		return err
+	}
+	return g.checkDestructiveRules(method, path)
+}
+
+// checkHostReachable covers Design/SECURITY.md §3 steps 1 and 3: the
+// host/port/path allowlist and the pinned-IP private/metadata block.
+func (g *Guard) checkHostReachable(entry *hostEntry, host string, port int, path string) error {
+	if len(entry.ports) > 0 && !entry.ports[port] {
+		return fmt.Errorf("%w: port %d not authorized for host %q", ErrOutOfScope, port, host)
+	}
+	if !pathAllowed(path, entry.rule.PathPrefixes) {
+		return fmt.Errorf("%w: path %q not under an authorized prefix for host %q", ErrOutOfScope, path, host)
 	}
 	if !g.scope.AllowPrivateTarget && isPrivateOrMetadata(entry.pinnedIP) {
-		return fmt.Errorf("%w: pinned IP %s for host %q is private/metadata and allow_private_target is false", ErrOutOfScope, entry.pinnedIP, host)
+		return fmt.Errorf("%w: pinned IP %s for host %q is private/metadata and allow_private_target is false",
+			ErrOutOfScope, entry.pinnedIP, host)
 	}
+	return nil
+}
+
+// checkDestructiveRules covers Design/SECURITY.md §3 step 5 and §6.
+func (g *Guard) checkDestructiveRules(method, path string) error {
 	if isDestructiveVerb(method) && !g.destructiveAllowed(method) {
 		return fmt.Errorf("%w: destructive verb %q not allowed by scope.destructive.allow_verbs", ErrOutOfScope, method)
 	}
-	if pathDenied(u.Path, g.scope.Destructive.DenyPaths) {
-		return fmt.Errorf("%w: path %q matches a deny_paths rule", ErrOutOfScope, u.Path)
+	if pathDenied(path, g.scope.Destructive.DenyPaths) {
+		return fmt.Errorf("%w: path %q matches a deny_paths rule", ErrOutOfScope, path)
 	}
 	return nil
 }
@@ -238,7 +260,7 @@ func matchGlob(pattern, p string) bool {
 }
 
 func isDestructiveVerb(method string) bool {
-	return strings.EqualFold(method, "DELETE")
+	return domain.IsDestructiveVerb(method)
 }
 
 func (g *Guard) destructiveAllowed(method string) bool {

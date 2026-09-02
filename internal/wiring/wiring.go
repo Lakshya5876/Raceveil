@@ -32,6 +32,8 @@ type ScanOptions struct {
 	ScopePath     string
 	AuthPath      string
 	OutDir        string
+	SafeMode      bool
+	IAmAuthorized bool
 }
 
 // ScanResult is presentation's view of a scan/verify outcome — it never
@@ -50,7 +52,18 @@ func defaultRunDir(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, time.Now().UTC().Format("20060102T150405Z"))
 }
 
-func newGuardAndStore(sc domain.Scope, outDir, dirPrefix string) (*scope.Guard, *persist.Writer, error) {
+// authorization carries the safe-mode gate inputs through to the one place
+// that enforces them, so no code path can construct a Guard while skipping
+// Design/SECURITY.md §2's public-target check.
+type authorization struct {
+	safeMode      bool
+	iAmAuthorized bool
+}
+
+func newGuardAndStore(sc domain.Scope, outDir, dirPrefix string, auth authorization) (*scope.Guard, *persist.Writer, error) {
+	if err := scope.CheckSafeMode(sc, auth.safeMode, auth.iAmAuthorized); err != nil {
+		return nil, nil, err
+	}
 	guard, err := scope.NewGuard(sc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("scope: %w", err)
@@ -83,7 +96,7 @@ func RunScan(ctx context.Context, opts ScanOptions) (ScanResult, error) {
 	if err != nil {
 		return ScanResult{}, err
 	}
-	guard, store, err := newGuardAndStore(sc, opts.OutDir, "raceveil-run")
+	guard, store, err := newGuardAndStore(sc, opts.OutDir, "raceveil-run", authorization{opts.SafeMode, opts.IAmAuthorized})
 	if err != nil {
 		return ScanResult{}, err
 	}
@@ -103,10 +116,12 @@ func RunScan(ctx context.Context, opts ScanOptions) (ScanResult, error) {
 
 // VerifyOptions are the resolved `raceveil verify` flags.
 type VerifyOptions struct {
-	FindingPath string
-	ScopePath   string
-	AuthPath    string
-	OutDir      string
+	FindingPath   string
+	ScopePath     string
+	AuthPath      string
+	OutDir        string
+	SafeMode      bool
+	IAmAuthorized bool
 }
 
 // RunVerify independently re-confirms a Finding on fresh trials, recomputing
@@ -127,7 +142,7 @@ func RunVerify(ctx context.Context, opts VerifyOptions) (ScanResult, domain.Find
 	if err != nil {
 		return ScanResult{}, finding, err
 	}
-	guard, store, err := newGuardAndStore(sc, opts.OutDir, "raceveil-verify")
+	guard, store, err := newGuardAndStore(sc, opts.OutDir, "raceveil-verify", authorization{opts.SafeMode, opts.IAmAuthorized})
 	if err != nil {
 		return ScanResult{}, finding, err
 	}
@@ -148,10 +163,12 @@ func RunVerify(ctx context.Context, opts VerifyOptions) (ScanResult, domain.Find
 
 // ReplayOptions are the resolved `raceveil replay` flags.
 type ReplayOptions struct {
-	FindingPath string
-	ScopePath   string
-	AuthPath    string
-	OutDir      string
+	FindingPath   string
+	ScopePath     string
+	AuthPath      string
+	OutDir        string
+	SafeMode      bool
+	IAmAuthorized bool
 }
 
 // RunReplay re-runs a Finding's exact recorded burst once for demonstration
@@ -172,7 +189,7 @@ func RunReplay(ctx context.Context, opts ReplayOptions) (domain.ConcurrentTrial,
 	if err != nil {
 		return domain.ConcurrentTrial{}, finding, err
 	}
-	guard, store, err := newGuardAndStore(sc, opts.OutDir, "raceveil-replay")
+	guard, store, err := newGuardAndStore(sc, opts.OutDir, "raceveil-replay", authorization{opts.SafeMode, opts.IAmAuthorized})
 	if err != nil {
 		return domain.ConcurrentTrial{}, finding, err
 	}

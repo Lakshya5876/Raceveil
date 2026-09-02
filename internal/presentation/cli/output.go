@@ -26,6 +26,57 @@ func printScanResult(w io.Writer, r wiring.ScanResult, format string) {
 	printFinding(w, *r.Finding, r.Oracle)
 }
 
+// printDiscoverySummary renders the v1 `scan <url>` result per
+// Design/UX.md: discovery counts first, then each finding, then the
+// skipped-with-no-invariant list — because showing the false-positive gate
+// working is precisely why a reader can trust what did get reported.
+func printDiscoverySummary(w io.Writer, s wiring.DiscoverySummary, format string) {
+	if format == "json" {
+		_ = json.NewEncoder(w).Encode(s)
+		return
+	}
+	if format == "sarif" {
+		findings := make([]domain.Finding, 0, len(s.Findings))
+		for _, f := range s.Findings {
+			if f.Finding != nil {
+				findings = append(findings, *f.Finding)
+			}
+		}
+		_ = writeSARIF(w, findings, countSuspected(s), Version)
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "Discovery  endpoints:%d  workflows:%d  ranked:%d\n", s.Endpoints, s.Workflows, s.Ranked)
+	_, _ = fmt.Fprintf(w, "Ranking    probed:%d  candidates with an established invariant:%d\n\n", s.Probed, s.CandidatesTested)
+
+	for _, f := range s.Findings {
+		if f.Finding != nil {
+			printFinding(w, *f.Finding, f.Oracle)
+			_, _ = fmt.Fprintln(w)
+		}
+	}
+
+	if len(s.Findings) == 0 {
+		_, _ = fmt.Fprintln(w, "No concurrency integrity violations found (LIKELY+).")
+	}
+	_, _ = fmt.Fprintf(w, "  %d experiment(s) run · %d finding(s) · %d endpoint(s) skipped (no invariant established)\n",
+		s.CandidatesTested, len(s.Findings), len(s.SkippedNoLimit))
+	for _, skipped := range s.SkippedNoLimit {
+		_, _ = fmt.Fprintf(w, "    skipped  %s\n", skipped)
+	}
+	_, _ = fmt.Fprintf(w, "  run directory: %s\n", s.RunDir)
+}
+
+func countSuspected(s wiring.DiscoverySummary) int {
+	n := 0
+	for _, f := range s.Findings {
+		if f.Oracle.Confidence == domain.Suspected {
+			n++
+		}
+	}
+	return n
+}
+
 func printClean(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "No concurrency integrity violations found (LIKELY+).")
 	_, _ = fmt.Fprintln(w, "  1 experiment run · 0 violations")

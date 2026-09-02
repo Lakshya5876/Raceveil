@@ -63,4 +63,7 @@ type Candidate struct {
 	PostStateProbe   *PostStateProbe   `yaml:"post_state_probe,omitempty" json:"post_state_probe,omitempty"`
 	BodyDifferential *BodyDifferential `yaml:"body_differential,omitempty" json:"body_differential,omitempty"`
 	ResetRecipe      *ResetRecipe      `yaml:"reset_recipe,omitempty" json:"reset_recipe,omitempty"`
+	// ScoreSignals explains an inferred Candidate's ranking; nil for
+	// declared Candidates, which carry no score (Design/DATA_MODEL.md §4).
+	ScoreSignals *ScoreSignals `json:"score_signals"`
 }

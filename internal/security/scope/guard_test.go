@@ -210,3 +210,15 @@ func TestIsPrivateOrMetadata(t *testing.T) {
 		})
 	}
 }
+
+// A target named without a trailing slash ("https://host") is the most
+// natural CLI invocation and must be treated as "/" (RFC 3986 §6.2.3).
+func TestCheck_EmptyPathIsTreatedAsRoot(t *testing.T) {
+	g, err := NewGuard(fixtureScope())
+	if err != nil {
+		t.Fatalf("NewGuard: %v", err)
+	}
+	if err := g.Check("GET", "http://127.0.0.1:18743"); err != nil {
+		t.Fatalf("a bare origin with no path must be allowed under prefix \"/\", got %v", err)
+	}
+}

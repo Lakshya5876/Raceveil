@@ -101,6 +101,7 @@ func TestRunScan_VulnerableFixture_ProducesLikelyFinding(t *testing.T) {
 		CandidatePath: candidatePath,
 		ScopePath:     scopePath,
 		AuthPath:      sessionPath,
+		SafeMode:      true,
 		OutDir:        filepath.Join(t.TempDir(), "run"),
 	})
 	if err != nil {
@@ -118,6 +119,7 @@ func TestRunScan_VulnerableFixture_ProducesLikelyFinding(t *testing.T) {
 		FindingPath: findingFilePath(t, result),
 		ScopePath:   scopePath,
 		AuthPath:    sessionPath,
+		SafeMode:    true,
 		OutDir:      filepath.Join(t.TempDir(), "verify"),
 	})
 	if err != nil {
@@ -132,6 +134,7 @@ func TestRunScan_VulnerableFixture_ProducesLikelyFinding(t *testing.T) {
 		FindingPath: findingFilePath(t, result),
 		ScopePath:   scopePath,
 		AuthPath:    sessionPath,
+		SafeMode:    true,
 		OutDir:      filepath.Join(t.TempDir(), "replay"),
 	})
 	if err != nil {
@@ -151,6 +154,7 @@ func TestRunScan_SafeTwinFixture_NoFinding(t *testing.T) {
 		CandidatePath: candidatePath,
 		ScopePath:     scopePath,
 		AuthPath:      sessionPath,
+		SafeMode:      true,
 		OutDir:        filepath.Join(t.TempDir(), "run"),
 	})
 	if err != nil {
@@ -167,7 +171,7 @@ func TestRunVerify_RefusesScopeTargetMismatch(t *testing.T) {
 	candidatePath, scopePath, sessionPath := setupFixtureFiles(t, "/issue-code", "/redeem", srv.Addr(), port)
 
 	result, err := RunScan(context.Background(), ScanOptions{
-		CandidatePath: candidatePath, ScopePath: scopePath, AuthPath: sessionPath,
+		CandidatePath: candidatePath, ScopePath: scopePath, AuthPath: sessionPath, SafeMode: true,
 		OutDir: filepath.Join(t.TempDir(), "run"),
 	})
 	if err != nil || !result.Found {
@@ -179,6 +183,7 @@ func TestRunVerify_RefusesScopeTargetMismatch(t *testing.T) {
 		FindingPath: findingFilePath(t, result),
 		ScopePath:   mismatchedScope,
 		AuthPath:    sessionPath,
+		SafeMode:    true,
 	})
 	if !IsScopeRefusal(err) {
 		t.Fatalf("expected a scope-refusal error for a mismatched target, got %v", err)

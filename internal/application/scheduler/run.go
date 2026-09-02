@@ -21,6 +21,11 @@ import (
 // Experiment rather than exceeding the ceiling to force a proof.
 var ErrUnprovableUnderCap = errors.New("unprovable-under-cap")
 
+// IsUnprovable reports whether err is (or wraps) ErrUnprovableUnderCap.
+// The discovery path uses it to skip one Candidate the Scope's proof
+// ceiling cannot cover, rather than aborting the whole scan.
+func IsUnprovable(err error) bool { return errors.Is(err, ErrUnprovableUnderCap) }
+
 const (
 	baselineRuns  = 2
 	maxTrials     = 6
